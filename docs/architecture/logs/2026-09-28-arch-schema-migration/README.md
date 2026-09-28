@@ -40,6 +40,10 @@ quarantined for human review) before /check-setup can pass.
   questions — the first is redundant with the `mcp-over-rest-bridge` capability the platform
   already ships (`http_endpoint` bridges REST as MCP at runtime; no separate code generator
   needed); the second is a time-bound state, not an open architectural question.
+- Reframed **Docker Compose** as local-dev-only. It is not a shipping deployment path; only
+  the Kubernetes / Helm chart path ships to production. Compose and Local Go are contributor
+  tooling for iteration and the e2e Playwright suite. `nfrs.md § Availability` and
+  `c4/deployment.md § Environments` both updated to say this explicitly.
 - Absorbed OpenBBC PR #50 (merged 2026-09-28):
   - migration 025 — `agent_versions.status` gains `PENDING` between `INITIALIZING` and
     `READY`; wizard Finalize is now async, drained by `scripts/process_pending_alphas.sh`.

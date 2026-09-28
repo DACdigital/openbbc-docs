@@ -2,12 +2,11 @@
 
 ## Availability
 
-Two shipping deployment paths as of OpenBBC PR #50:
-- **Docker Compose (single-instance)** — `docker-compose.yml` brings up Postgres + one
-  `open-bbcd`, with the plain `aikdm` image behind a compose profile.
-- **Kubernetes (Helm chart `deploy/helm/openbbc/`)** — open-bbcd `Deployment` (default one
-  replica) + `Service` + optional `Ingress`, optional in-cluster Postgres `StatefulSet`, and
-  three `CronJob`s (alphas, evals, trainings) running the `aikdm-runner` image.
+Shipping deployment path as of OpenBBC PR #50 is Kubernetes via the Helm chart at
+`deploy/helm/openbbc/`: open-bbcd `Deployment` (default one replica) + `Service` + optional
+`Ingress`, optional in-cluster Postgres `StatefulSet` (or point `externalDatabase.url` at a
+managed DB), and three `CronJob`s (alphas, evals, trainings) running the `aikdm-runner`
+image.
 
 `open-bbcd` keeps no local disk state (discovery zip lives in Postgres per migration 026),
 so scaling out the app tier is a matter of replica count — **except** that migrations still
@@ -16,7 +15,11 @@ deployment is therefore not migration-safe today; the chart ships one replica by
 a proper fix (goose `Provider` + `SessionLocker`, or a pre-install migrations `Job`) is
 tracked as an open question in `assumptions.md`.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1 Deploying open-bbcd, § 8 Known gaps, ARCHITECTURE.md § Docker deployment on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart shipped; open-bbcd stateless per mig 026). -->
+Docker Compose (`docker-compose.yml` at the OpenBBC repo root) is a **local-dev-only**
+setup, not a shipping path — see [`deployment.md § Environments`](../c4/deployment.md#environments)
+for the full environment table.
+
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1 Deploying open-bbcd, § 8 Known gaps, ARCHITECTURE.md § Docker deployment on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart shipped; open-bbcd stateless per mig 026). Corrected 2026-09-28 to drop Docker Compose from the shipping-paths list — it is a local-dev tool only. -->
 
 <!-- ARCH_GAP: no quantitative availability target sourced.
      Section: Availability

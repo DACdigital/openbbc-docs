@@ -2,23 +2,26 @@
 
 ## Environments
 
-- **Local Go** — `make build && ./bin/open-bbcd` with `$DATABASE_URL` pointing at Postgres.
-  Migrations auto-apply on boot (goose embedded via `//go:embed`).
-- **Docker Compose (single-instance)** — top-level `docker-compose.yml` brings up
-  `postgres` + `open-bbcd`; the plain `aikdm` image sits behind the `aikdm` compose profile
-  (`docker compose --profile aikdm run --rm aikdm …`). Suited for local dev + single-node
-  production. After migration 026 the compose file no longer needs the `discovery-data`
-  named volume.
-- **Kubernetes (Helm chart `deploy/helm/openbbc/`)** — shipping k8s path as of OpenBBC PR
-  #50. Ships one `Deployment` replica of `open-bbcd` + `Service` + optional `Ingress`, an
-  optional in-cluster Postgres `StatefulSet` (or point `externalDatabase.url` at a managed
-  DB), and three `CronJob`s running the `aikdm-runner` image: alphas
-  (`*/5 * * * *`, mounts `DATABASE_URL`), evals (`*/10 * * * *`), trainings
-  (`*/15 * * * *`). Chart default image repositories point at
-  `ghcr.io/dacdigital/openbbc/{open-bbcd,aikdm-runner}` — pick a `TAG`
-  (`pr-<num>`, `main`, `sha-<short>`, semver, `latest`) and `--set image.tag=$TAG`.
+**Shipping path — Kubernetes via Helm chart `deploy/helm/openbbc/`.** Ships one
+`Deployment` replica of `open-bbcd` + `Service` + optional `Ingress`, an optional in-cluster
+Postgres `StatefulSet` (or point `externalDatabase.url` at a managed DB), and three
+`CronJob`s running the `aikdm-runner` image: alphas (`*/5 * * * *`, mounts `DATABASE_URL`),
+evals (`*/10 * * * *`), trainings (`*/15 * * * *`). Chart default image repositories point
+at `ghcr.io/dacdigital/openbbc/{open-bbcd,aikdm-runner}` — pick a `TAG`
+(`pr-<num>`, `main`, `sha-<short>`, semver, `latest`) and `--set image.tag=$TAG`.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1 Deploying, § 8 Known gaps, ARCHITECTURE.md § Docker deployment on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart shipped; discovery-data volume removed per mig 026). -->
+**Local dev only — not shipping:**
+- **Local Go** — `make build && ./bin/open-bbcd` with `$DATABASE_URL` pointing at Postgres.
+  Migrations auto-apply on boot (goose embedded via `//go:embed`). Used by contributors
+  running the Go tests + iterating on handler code.
+- **Docker Compose** — top-level `docker-compose.yml` brings up `postgres` + `open-bbcd`;
+  the plain `aikdm` image sits behind the `aikdm` compose profile
+  (`docker compose --profile aikdm run --rm aikdm …`). After migration 026 the compose file
+  no longer needs the `discovery-data` named volume. Used by contributors demoing the full
+  stack + running the e2e Playwright suite. **Not a production deployment path** — no
+  Ingress, no drainer CronJobs, no replica story.
+
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1 Deploying, § 8 Known gaps, ARCHITECTURE.md § Docker deployment on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart shipped; discovery-data volume removed per mig 026). Corrected 2026-09-28 to reflect that Docker Compose and Local Go are dev-only, not shipping deployment paths. -->
 
 ## Network zones
 
