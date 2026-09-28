@@ -9,9 +9,9 @@ Two shipping deployment paths as of OpenBBC PR #50:
   replica) + `Service` + optional `Ingress`, optional in-cluster Postgres `StatefulSet`, and
   three `CronJob`s (alphas, evals, trainings) running the `aikdm-runner` image.
 
-`open-bbcd` is stateless (discovery zip lives in Postgres per migration 026), so scaling out
-the app tier is a matter of replica count — **except** that migrations still run on boot via
-embedded `goose` and racing pods can corrupt the migration state. Multi-replica
+`open-bbcd` keeps no local disk state (discovery zip lives in Postgres per migration 026),
+so scaling out the app tier is a matter of replica count — **except** that migrations still
+run on boot via embedded `goose` and racing pods can corrupt the migration state. Multi-replica
 deployment is therefore not migration-safe today; the chart ships one replica by default and
 a proper fix (goose `Provider` + `SessionLocker`, or a pre-install migrations `Job`) is
 tracked as an open question in `assumptions.md`.

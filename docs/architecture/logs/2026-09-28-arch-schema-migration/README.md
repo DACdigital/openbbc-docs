@@ -30,6 +30,16 @@ quarantined for human review) before /check-setup can pass.
 - Corrected discovery-skill outputs: `.flow-map/` schema v2 is `AGENTS.md`, `APP.md`,
   `glossary.md`, `skills/<id>.md`, `flows/<id>.md`, `endpoints/<id>.md` — the old
   `capabilities/`, `agents/` layout from ARCHITECTURE.md was stale.
+- Removed misleading "**`open-bbcd` is stateless**" framing — the platform has a Postgres
+  database. Reworded to "no local disk state required" wherever it appeared (assumptions,
+  constraints, nfrs, glossary, c4/containers, c4/deployment).
+- Removed "**Three images published to GHCR**" from Design decisions (locked) — it's a
+  time-bound state, not an architectural decision. The GHCR fact still appears in
+  `c4/integrations.md § Integrations` table where it belongs.
+- Removed "**MCP-server generator**" and "**GHCR public-visibility flip**" from Open
+  questions — the first is redundant with the `mcp-over-rest-bridge` capability the platform
+  already ships (`http_endpoint` bridges REST as MCP at runtime; no separate code generator
+  needed); the second is a time-bound state, not an open architectural question.
 - Absorbed OpenBBC PR #50 (merged 2026-09-28):
   - migration 025 — `agent_versions.status` gains `PENDING` between `INITIALIZING` and
     `READY`; wizard Finalize is now async, drained by `scripts/process_pending_alphas.sh`.

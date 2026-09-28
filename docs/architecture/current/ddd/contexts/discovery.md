@@ -76,8 +76,10 @@ because no MCP server exists yet and someone has to specify it. Fully agent-driv
 - **Not exposed over REST.** The skill runs client-side inside Claude Code; `open-bbcd` sees
   only the uploaded zip.
 - **Not an MCP server generator.** Turning `endpoints/<id>.md` into a runnable MCP surface
-  is downstream engineering — see `bizbok/capabilities.md § mcp-over-rest-bridge` for the
-  built-in `http_endpoint` bridge in `open-bbcd`, and `assumptions.md § Open questions` for
-  the "MCP-server generator" placeholder.
+  is downstream engineering. For plain REST backends the platform ships the built-in
+  `mcp-over-rest-bridge` capability at runtime ([`../../bizbok/capabilities.md`](../../bizbok/capabilities.md)
+  under Agent lifecycle management, backed by `tool_backends.kind = http_endpoint`) — so
+  discovering endpoints is often enough; no server generator is required. For non-REST
+  backends operators register an existing MCP server as `tool_backends.kind = mcp_client`.
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § flow-map-compiler, DESIGN.md § Phase 0, § Phase I on 2026-09-28. Updated 2026-09-28. -->

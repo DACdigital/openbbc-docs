@@ -26,7 +26,8 @@
   customer auth. Only surface exposed to the internet.
 - **App zone** — `open-bbcd` (`:8080`); reachable from the gateway and from the internal
   automation surface (operator, cron scripts, k8s CronJobs). Backoffice UI lives in this
-  zone. No local disk state after migration 026 — the pod is stateless.
+  zone. No local disk state after migration 026 — the pod holds no state on its filesystem;
+  all persisted state lives in the Data zone.
 - **Data zone (trust boundary)** — `postgres` (`:5432`) with `postgres-data` persistent
   volume; only `open-bbcd` and (on the alpha-drainer path) `aikdm-runner`'s `seed_bundle.py`
   reach it.
@@ -77,7 +78,7 @@ flowchart TB
     end
 
     subgraph APP[App zone]
-        OBBCD[open-bbcd<br/>stateless]
+        OBBCD[open-bbcd<br/>no local disk state]
     end
 
     subgraph JOB[Job zone]

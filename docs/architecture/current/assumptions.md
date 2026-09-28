@@ -52,10 +52,11 @@
 - **Distroless runtime image, CGO off.** `open-bbcd/Dockerfile` runtime on
   `gcr.io/distroless/static-debian12:nonroot`; the container `HEALTHCHECK` uses the
   `open-bbcd healthcheck` subcommand (no `curl` in distroless). Date: current shipping design.
-- **`open-bbcd` is stateless.** Discovery zip lives in `agents.discovery_zip BYTEA`
-  (migration 026); Postgres is the only stateful component. `internal/storage/storage.go`
+- **Discovery zip lives on the `agents` row, not on local disk.** `agents.discovery_zip BYTEA`
+  (migration 026) inlines the uploaded `.flow-map/` archive; `internal/storage/storage.go`
   has been removed; the deprecated `discovery_file_path` column is retained ignored to keep
-  the migration reversible. Date: migration 026 (OpenBBC PR #50).
+  the migration reversible. The `open-bbcd` pod therefore needs no persistent volume — all
+  state lives in Postgres. Date: migration 026 (OpenBBC PR #50).
 - **PENDING is the alpha-generation state.** `agent_versions.status` now includes `PENDING`
   between `INITIALIZING` and `READY` (migration 025). Wizard Finalize transitions a root
   version `INITIALIZING → PENDING`; the async drainer (`scripts/process_pending_alphas.sh`
@@ -63,10 +64,6 @@
   transitions `PENDING → READY`. Date: migration 025 (OpenBBC PR #50).
 - **Contract between `aikdm` and `open-bbcd` is REST + a versioned YAML schema.** No shared
   library. Section structure declared in `aikdm/schemas/prompt-v1.yaml`.
-- **Three images published to GHCR** on every PR / merge-to-main / `v*` tag:
-  `ghcr.io/dacdigital/openbbc/open-bbcd`, `.../aikdm-runner`, `.../aikdm`. The chart defaults
-  point at these paths. Tags: `pr-<num>`, `main`, `sha-<short>`, semver. Date: OpenBBC PR #50
-  (`.github/workflows/publish-images.yml`).
 - **Helm chart is the shipping k8s deployment path** (`deploy/helm/openbbc/`): open-bbcd
   Deployment + Service + optional Ingress, optional in-cluster Postgres StatefulSet, and three
   CronJobs (alphas / evals / trainings) running the `aikdm-runner` image. Date: OpenBBC PR
@@ -85,16 +82,9 @@
   runs migrations on boot via embedded `goose` — replicas racing on migrations is still open.
   Fix: switch to goose's `Provider` API with `SessionLocker`, or move migrations to a `Job`
   hook the chart runs pre-install/pre-upgrade.
-- **MCP-server generator.** The flow-map-compiler skill only proposes tool names + specs; no
-  skill or tool ships that turns `endpoints/*.md` into a runnable MCP server. Today the
-  `http_endpoint` `tool_backends` kind is the built-in bridge; a proper generator would live
-  outside `open-bbcd`.
-- **GHCR public-visibility flip.** The three images (`open-bbcd`, `aikdm-runner`, `aikdm`)
-  are published but the packages may still be private under `DACdigital` (see PR #50 body's
-  post-merge checklist). Chart pulls anonymous fine only once flipped public.
 - **Timeout-based reset of stuck IN_PROGRESS items.** If a batch script dies mid-run, evals /
   training sessions stay IN_PROGRESS forever; today the fix is manual DB update.
 - **Agent operator / multi-tenant runtime.** Roadmap mentions an operator pattern for
   multi-agent deployments; unscoped.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 8 Known gaps, ARCHITECTURE.md § Docker deployment future, DESIGN.md § Out of Scope on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart + GHCR publish removed from roadmap; MCP generator + multi-replica migrations remain open). -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 8 Known gaps, ARCHITECTURE.md § Docker deployment future, DESIGN.md § Out of Scope on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart + GHCR publish removed from roadmap). -->

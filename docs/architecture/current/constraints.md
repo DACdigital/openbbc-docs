@@ -38,10 +38,10 @@
   (migration 020 dropped schema uniqueness to allow cross-version reuse within one dataset).
 - **`chat_message_feedback.judge_criteria` must be non-empty on every session's feedback rows
   before dataset close-draft succeeds.**
-- **`open-bbcd` is stateless.** Discovery zip lives on `agents.discovery_zip BYTEA`
-  (migration 026); the deprecated `discovery_file_path` column is retained ignored for
-  reversibility. `DISCOVERY_STORAGE_DIR` is **not** required; `internal/storage/storage.go`
-  has been removed.
+- **`open-bbcd` needs no local disk state.** Discovery zip lives on `agents.discovery_zip
+  BYTEA` (migration 026); the deprecated `discovery_file_path` column is retained ignored
+  for reversibility. `DISCOVERY_STORAGE_DIR` is **not** required; `internal/storage/storage.go`
+  has been removed. All persisted state lives in Postgres.
 - **Multi-replica deployments are not migration-safe.** Each open-bbcd pod runs migrations
   on boot via embedded `goose`; concurrent boots race. The Helm chart ships a single
   `Deployment` replica of `open-bbcd` by default.
@@ -49,8 +49,5 @@
   Every operator must front it with a gateway; direct exposure is unsafe.
 - **`deployed_sessions` cannot carry per-session header overrides today** — only chat and eval
   paths do.
-- **Three images published to GHCR** on every PR (same-repo only) / merge to `main` / `v*`
-  tag: `ghcr.io/dacdigital/openbbc/open-bbcd`, `.../aikdm-runner`, `.../aikdm`. Chart
-  `image.repository` defaults point at these paths.
 
 <!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). -->

@@ -14,7 +14,7 @@ C4Container
 
     System_Boundary(sys, "OpenBBC") {
         Container(fmc, "flow-map-compiler", "Claude Code skill (markdown + templates)", "Scans a client frontend repo, emits .flow-map/ (schema v2)")
-        Container(obbcd, "open-bbcd", "Go 1.22+, database/sql + lib/pq, html/template + htmx, goose migrations", "Backoffice UI + REST API + deployed agent runtime + MCP-over-REST bridge (stateless binary)")
+        Container(obbcd, "open-bbcd", "Go 1.22+, database/sql + lib/pq, html/template + htmx, goose migrations", "Backoffice UI + REST API + deployed agent runtime + MCP-over-REST bridge (single binary, no local disk state)")
         Container(aikdm, "aikdm", "Python 3.12+, click, Google ADK + LiteLLM, Pydantic, Jinja2, uv", "Generate / evaluate / train agent bundles; DB-unaware, REST-only")
         Container(aikdmrun, "aikdm-runner", "python:3.12-slim + bash + curl + tini + uv + aikdm + scripts/", "Kubernetes CronJob runtime: drains PENDING alphas / evals / trainings")
         ContainerDb(db, "postgres", "PostgreSQL 15+", "Owns agents (+discovery_zip BYTEA), versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions")
@@ -84,9 +84,10 @@ contexts: `agents` (+ `discovery_zip BYTEA` migration 026), `agent_versions` (`s
 `capabilities[]`, `tool_backends`, `agent_endpoint_backend`, `agent_version_mcp_backend`,
 `chat_sessions` + `chat_messages` + `chat_message_feedback`, `datasets` + `dataset_versions`
 + `dataset_version_sessions`, `evals` + `eval_sessions`, `training_sessions`,
-`deployed_sessions` + `deployed_messages`. **Stateless at the process level** — no local
-disk required after migration 026 removed the discovery-storage directory
-(`DISCOVERY_STORAGE_DIR` env var no longer read; `internal/storage/storage.go` removed).
+`deployed_sessions` + `deployed_messages`. **No local disk state required** — after
+migration 026 inlined the discovery zip on `agents.discovery_zip BYTEA` the process reads
+and writes only Postgres (`DISCOVERY_STORAGE_DIR` env var no longer read;
+`internal/storage/storage.go` removed).
 
 **Published API / events.**
 - REST (JSON): `/evals/*`, `/training-sessions/*`, `/datasets/*`, `/agents/*/deploy`,
