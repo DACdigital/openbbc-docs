@@ -1,0 +1,73 @@
+# arch-schema-migration — reshape docs/architecture/current/ into schema
+
+**Date**: 2026-09-28
+**Codename**: arch-schema-migration
+
+**Driver**: template pulled schema-enforcing /check-setup — migrate to conform
+
+**Decision**: reshape docs/architecture/current/ from freestyle into the 20-file schema
+defined in .claude/skills/check-setup/arch-schema.md
+
+**Rationale**: /check-setup now enforces the schema; existing freestyle content (three
+files adopted from DACdigital/OpenBBC docs/) must be bucketed into schema shape (or
+quarantined for human review) before /check-setup can pass.
+
+**Alternatives rejected**:
+- Keep freestyle — rejected: /check-setup fails on missing required files.
+- Manual reshape — rejected: LLM bucketing preserves provenance and structure at scale.
+
+**Impact**:
+- reshaped: docs/architecture/current/** (20 files written per schema — 4 top-level, 5 bizbok, 3 ddd + 6 context files, 6 c4)
+- quarantined: docs/architecture/current/_migration-quarantine/{ARCHITECTURE.md,DESIGN.md,PRODUCTION.md} (source retained as audit trail)
+- + docs/architecture/logs/2026-09-28-arch-schema-migration/README.md
+
+**Amendments during PR review** (2026-09-28, same day):
+- Corrected the scope assumption "client backend is already wrapped by MCP" — reality is
+  OpenBBC ships a built-in MCP-over-REST bridge (`tool_backends.kind = http_endpoint`) so
+  clients can integrate a plain REST backend without building an MCP server. The flow-map-
+  compiler skill's LOCKED anti-goal is explicit: "never generate MCP server code, never
+  assume an MCP server exists".
+- Corrected discovery-skill outputs: `.flow-map/` schema v2 is `AGENTS.md`, `APP.md`,
+  `glossary.md`, `skills/<id>.md`, `flows/<id>.md`, `endpoints/<id>.md` — the old
+  `capabilities/`, `agents/` layout from ARCHITECTURE.md was stale.
+- Removed misleading "**`open-bbcd` is stateless**" framing — the platform has a Postgres
+  database. Reworded to "no local disk state required" wherever it appeared (assumptions,
+  constraints, nfrs, glossary, c4/containers, c4/deployment).
+- Removed "**Three images published to GHCR**" from Design decisions (locked) — it's a
+  time-bound state, not an architectural decision. The GHCR fact still appears in
+  `c4/integrations.md § Integrations` table where it belongs.
+- Removed "**MCP-server generator**" and "**GHCR public-visibility flip**" from Open
+  questions — the first is redundant with the `mcp-over-rest-bridge` capability the platform
+  already ships (`http_endpoint` bridges REST as MCP at runtime; no separate code generator
+  needed); the second is a time-bound state, not an open architectural question.
+- Reframed **Docker Compose** as local-dev-only. It is not a shipping deployment path; only
+  the Kubernetes / Helm chart path ships to production. Compose and Local Go are contributor
+  tooling for iteration and the e2e Playwright suite. `nfrs.md § Availability` and
+  `c4/deployment.md § Environments` both updated to say this explicitly.
+- Fully rewritten the **Discovery** L1 capability + the `flow-map-compilation` L2 entry +
+  `ddd/contexts/discovery.md § Purpose` + `c4/containers.md § flow-map-compiler` + the
+  Discovery → alpha agent value stream: earlier framing said discovery only "proposes an
+  MCP tool surface". Reality is broader — the `.flow-map/` wiki is a complete
+  business-and-technical understanding of the app (`flows/`, `skills/`, `APP.md`,
+  `glossary.md`, `endpoints/`) that feeds **both** prompt generation and tool wiring.
+- Absorbed OpenBBC PR #50 (merged 2026-09-28):
+  - migration 025 — `agent_versions.status` gains `PENDING` between `INITIALIZING` and
+    `READY`; wizard Finalize is now async, drained by `scripts/process_pending_alphas.sh`.
+  - migration 026 — `agents.discovery_zip BYTEA` inlines the discovery zip; `open-bbcd` is
+    now stateless (no PVC / `DISCOVERY_STORAGE_DIR` required); `internal/storage/storage.go`
+    removed.
+  - Helm chart `deploy/helm/openbbc/` — k8s deployment path with one Deployment + three
+    CronJobs (`alphas`, `evals`, `trainings`) running the new `aikdm-runner` image.
+  - `Dockerfile.aikdm-runner` + `.github/workflows/publish-images.yml` — three images
+    published to `ghcr.io/dacdigital/openbbc/{open-bbcd,aikdm-runner,aikdm}` on every PR /
+    merge-to-main / `v*` tag.
+  - New L1 capability "Batch drainer operations" + L2 capabilities
+    `alpha-drainer`, `eval-drainer`, `training-drainer`, `mcp-over-rest-bridge`.
+  - New `c4/containers.md` container `aikdm-runner`; deployment / data-flows / integrations
+    updated for the new topology.
+
+**Links**:
+- .claude/skills/check-setup/arch-schema.md
+- docs/superpowers/specs/2026-09-18-arch-current-schema-design.md
+- https://github.com/DACdigital/OpenBBC/pull/50 (source of the amendments)
+- bbc-discovery/flow-map-compiler/skills/flow-map-compiler/SKILL.md (source of the anti-goal correction)
