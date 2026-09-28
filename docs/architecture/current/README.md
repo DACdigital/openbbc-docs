@@ -7,6 +7,7 @@ flowchart TB
     Client[Client frontend]
     Admin[Admin and domain expert]
     Backend[Client backend<br/>REST or MCP]
+    ObjStore[Object store<br/>deployer provided]
 
     subgraph OURS[OpenBBC platform]
         FMC[flow-map-compiler<br/>Claude Code skill]
@@ -20,10 +21,11 @@ flowchart TB
     OBBCD -- MCP over SSE or HTTP --> Backend
     OBBCD -- SQL --> DB
     OBBCD -- REST via scripts --> AIKDM
+    OBBCD -- S3 API --> ObjStore
     FMC -- flow-map zip --> OBBCD
 ```
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, DESIGN.md § Architecture Overview on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, DESIGN.md § Architecture Overview on 2026-09-28. Updated 2026-09-28 for artifact-support — added Object store external element. -->
 
 ## Map of content
 

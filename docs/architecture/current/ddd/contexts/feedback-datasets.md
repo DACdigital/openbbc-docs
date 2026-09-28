@@ -12,7 +12,11 @@ tested) and upstream of `evaluation` (which scores against a CLOSED dataset vers
   Owns `chat_messages[]`, `backend_header_overrides` (JSONB, migration 016; per-backend layout
   `{backend_id: {header: value}}`), and `locked_at` (flips on dataset close).
 - **Chat message** (entity within Chat session) — `chat_messages` row. Turns; role ∈
-  `{user, assistant}`.
+  `{user, assistant, tool}` (DB check constraint includes `tool` since migration 009).
+  `content` is a typed content-block list (JSONB): `text` blocks for prompt/completion text
+  and `artifact_ref` blocks pointing to a blob in a configured artifact store — see
+  [`artifacts`](artifacts.md). Historical rows may still carry the legacy opaque-text
+  shape; readers normalise on load.
 - **Feedback** (entity attached to assistant `chat_messages`) — `chat_message_feedback` row
   (migration 019). Fields: `rating` ∈ `{up, down}`, `comment`, `expected_output`,
   `judge_criteria` (JSONB array of acceptance-criteria bullets, migration 021).
@@ -47,6 +51,11 @@ event bus notification alongside.
   feedback row** (migration 021). Enforced repo-side.
 - **Feedback only attaches to assistant-role messages** — enforced at the repo layer (Postgres
   doesn't do partial FKs) via `chat_message_feedback`.
+- **`artifact_ref` blocks on locked sessions stay resolvable.** Closing a DRAFT flips
+  `chat_sessions.locked_at`; from that point on, the `artifacts` context refuses deletion of
+  any blob or `artifact_stores` row referenced by a locked session's messages (see
+  [`artifacts.md § Invariants`](artifacts.md#invariants)). This is the replay-safety
+  guarantee evals depend on.
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § Feedback + datasets, DESIGN.md § Phase II on 2026-09-28 -->
 

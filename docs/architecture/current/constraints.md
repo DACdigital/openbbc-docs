@@ -49,5 +49,32 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
   Every operator must front it with a gateway; direct exposure is unsafe.
 - **`deployed_sessions` cannot carry per-session header overrides today** — only chat and eval
   paths do.
+- **`ARTIFACT_MAX_UPLOAD_MB` env var caps per-artifact upload size.** No default is shipped
+  — deployers set this explicitly at install time (rationale: any single default would be
+  wrong for either text-heavy or media-heavy deployments). Enforced at the upload boundary
+  on both `POST /chat-sessions/{id}/artifacts` and
+  `POST /deployed/{agent_id}/sessions/{id}/artifacts`; retrieval is not capped so refs
+  stored under a lower prior cap remain readable.
+- **Artifact stores are configured via env vars only — no REST/DB surface.** Each store is
+  declared through `ARTIFACT_STORE_<ID>_KIND` plus kind-specific vars (e.g.
+  `ARTIFACT_STORE_<ID>_ENDPOINT`, `_BUCKET`, `_ACCESS_KEY`, `_SECRET_KEY` for the
+  `s3_compatible` kind). Registry is loaded at `open-bbcd` boot; runtime CRUD is not
+  supported — reconfiguration requires a redeploy. Credentials handling matches the LLM-
+  API-key pattern (env / operator secret store), not `tool_backends`.
+- **Exactly one `ARTIFACT_STORE_DEFAULT` at boot.** Nominates which store new writes go
+  to. If unset and any `artifact_ref`-emitting capability is exercised, the request is
+  rejected with a clear error. Refs already stored under a previous default remain
+  resolvable via their embedded `store_id` — flipping the default does not break history.
+- **`<ID>` slug in env-var names is the `store_id` on refs.** Refs carry the slug
+  verbatim; renaming a store id between deploys breaks every historical ref that pointed
+  at it. Ids must be stable across the lifetime of any blob any locked session references.
+- **Artifact bytes must not be stored in Postgres.** `chat_messages.content` and
+  `deployed_messages.content` JSONB carry only `artifact_ref` pointers (`{store_id, uri,
+  mime, size_bytes, sha256}`); blob bytes flow through the `artifact-store-adapter` to the
+  deployer's Object store. Repo-layer guards reject any attempt to inline base64 payloads
+  in a content block.
+- **Artifact-store kinds are versioned via the `kind` env-var value.** First-shipped kind:
+  `s3_compatible`. Adding a new kind is a code change (register the adapter + declare its
+  env-var schema) — not a runtime plug-in surface.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. -->

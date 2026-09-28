@@ -66,7 +66,19 @@ Recommended gateway pattern: terminate auth at ingress, rewrite `user_id` to the
 identity, forward to `open-bbcd`. Prefer network reachability restrictions (private VPC / VPN /
 SSO) for the backoffice surface over per-route allowlisting.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model on 2026-09-28 -->
+**Artifact-store credentials and refs.** With the `artifact-support` capability, `open-bbcd`
+reads server-to-server credentials for the deployer's Object store **from env vars**
+(`ARTIFACT_STORE_<ID>_ACCESS_KEY`, `_SECRET_KEY`, and equivalents per kind) — same handling
+class as LLM provider keys, not persisted in Postgres. This is a stronger posture than
+`tool_backends.config`: one fewer secret class in the DB, and the credentials never leave
+the deploy-time env / operator secret store. Artifact reads are session-scoped:
+`GET /artifacts/{store_id}/{uri}?session_id=…&user_id=…` returns 404 on session/user
+mismatch (same trust boundary as messages) — an `artifact_ref` `{store_id, uri}` pair is
+not a bearer capability. When an adapter returns a presigned URL in place of proxied
+bytes, the URL inherits the store's TTL and access is auditable through the deployer's
+object-store logs.
+
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model on 2026-09-28. Updated 2026-09-28 for artifact-support — added artifact-store credentials + ref-access model. -->
 
 ## Compliance
 
@@ -77,6 +89,13 @@ user population. The concepts the platform stores are tagged coarsely in
 [`bizbok/information-map.md`](bizbok/information-map.md) under the *Regulatory tag* column
 (`system-metadata`, `user-content (deployer-classified)`, `credentials`) so a deployer's
 compliance analysis has a starting inventory.
+
+**Artifacts add a new locus of user content — outside Postgres.** With the `artifact-support`
+capability, deployers now also need to run their compliance analysis against the configured
+Object store's residency, retention, right-to-erasure, encryption-at-rest, and access-log
+properties. `open-bbcd` holds only refs in Postgres; blob bytes and their metadata (creation
+time, byte count, MIME, checksum) live in the deployer's chosen storage backend and inherit
+whatever compliance envelope that backend provides.
 
 ## Observability
 

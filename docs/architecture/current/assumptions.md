@@ -68,8 +68,29 @@
   Deployment + Service + optional Ingress, optional in-cluster Postgres StatefulSet, and three
   CronJobs (alphas / evals / trainings) running the `aikdm-runner` image. Date: OpenBBC PR
   #50.
+- **Artifacts live in a pluggable artifact store; `open-bbcd` holds only refs.** Chat and
+  deployed-runtime file exchanges (any MIME, both directions, all four legs — user upload,
+  MCP tool output, agent emission, agent-to-tool argument) flow through an
+  `artifact-store-adapter` to a deployer-configured Object store. Bytes never enter
+  Postgres; `chat_messages.content` and `deployed_messages.content` JSONB carry typed
+  content blocks including `artifact_ref` pointers only. First shipped kind:
+  `s3_compatible` (covers AWS S3, MinIO, GCS-HMAC, R2, B2, any S3-API endpoint).
+  **Store registry is env-driven, not REST-driven** — deployers declare stores at boot via
+  `ARTIFACT_STORE_<ID>_*` env vars and nominate a write target via
+  `ARTIFACT_STORE_DEFAULT=<ID>`. There is no REST / BO surface for adding, removing, or
+  reconfiguring stores at runtime; credentials handling matches the LLM-API-key pattern
+  (env / operator secret store), not the `tool_backends` DB-config pattern. Reads route
+  via the `store_id` on each ref; writes route to the env-nominated default. Rationale:
+  keeps `open-bbcd`'s "no local disk state" invariant intact (Postgres bloat and media
+  workloads don't mix); keeps blob-store credentials out of Postgres entirely (a stronger
+  security posture than `tool_backends.config` — one fewer secret class in the DB); makes
+  install reproducible from a single env manifest (CI/CD / Helm-friendly); keeps eval
+  replay deterministic via the invariant "refs stay resolvable while any locked session
+  references them" (see [`ddd/contexts/artifacts.md`](ddd/contexts/artifacts.md)).
+  Trade-off: adding or reconfiguring a store requires a redeploy — accepted because store
+  changes are rare and refs remain resolvable across default flips. Date: 2026-09-28.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. -->
 
 ## Open questions
 

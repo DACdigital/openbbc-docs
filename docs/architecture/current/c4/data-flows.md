@@ -125,6 +125,39 @@ sequenceDiagram
 
 <!-- migrated from _migration-quarantine/DESIGN.md § Phase IV, ARCHITECTURE.md § Training sessions, § Data Flow / Flow 4 on 2026-09-28. Rewritten 2026-09-28 for GitHub-safe mermaid syntax. -->
 
+## Multimodal chat with artifacts
+
+```mermaid
+sequenceDiagram
+    participant User as End user or Admin
+    participant OBBCD as open bbcd
+    participant DB as postgres
+    participant STORE as Object store
+    participant BE as Client backend
+
+    Note over OBBCD, STORE: precondition, operator declared at least one ARTIFACT_STORE via env at deploy time and set ARTIFACT_STORE_DEFAULT
+    User->>OBBCD: POST sessions sid artifacts multipart file
+    OBBCD->>STORE: put bytes bounded by ARTIFACT_MAX_UPLOAD_MB via adapter
+    STORE-->>OBBCD: uri plus size_bytes plus sha256
+    OBBCD-->>User: 201 with store_id uri mime size sha256
+
+    User->>OBBCD: POST turn user content is text plus artifact_ref block
+    OBBCD->>DB: INSERT message content JSONB with typed blocks
+    OBBCD->>BE: tool call, artifact arg materialised as inline bytes or presigned url per backend contract
+    BE-->>OBBCD: tool result with ImageContent or EmbeddedResource
+    OBBCD->>STORE: put unpacked bytes via adapter
+    STORE-->>OBBCD: uri
+    OBBCD->>DB: INSERT tool role message with artifact_ref block
+
+    OBBCD-->>User: assistant reply on chat or ARTIFACT_REF event on AG UI stream
+    User->>OBBCD: GET artifacts store_id uri with session_id user_id
+    OBBCD->>STORE: get or sign uri
+    STORE-->>OBBCD: bytes or signed url
+    OBBCD-->>User: bytes or 302 redirect
+```
+
+<!-- new data flow added 2026-09-28 for artifact-support. GitHub-safe mermaid syntax per diagram conventions. -->
+
 ## Deployment
 
 ```mermaid

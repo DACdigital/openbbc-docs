@@ -16,6 +16,7 @@ C4Context
     System_Ext(clientbe, "Client backend", "REST or MCP, exposes capabilities as tools")
     System_Ext(llmprov, "LLM providers", "Anthropic default, OpenAI, Gemini via LiteLLM")
     System_Ext(claudecode, "Claude Code", "Runtime that executes flow-map-compiler")
+    System_Ext(objstore, "Object store", "Deployer-provided artifact blob backend, S3 API")
 
     Rel(admin, sys, "backoffice UI plus REST", "HTTPS and htmx")
     Rel(operator, sys, "REST automation", "HTTPS")
@@ -24,6 +25,7 @@ C4Context
     Rel(clientfe, sys, "chat", "AG-UI over SSE")
     Rel(sys, clientbe, "tool calls", "MCP over SSE or HTTP")
     Rel(sys, llmprov, "completions", "HTTPS")
+    Rel(sys, objstore, "artifact put get delete", "S3 API over HTTPS")
     Rel(discauth, claudecode, "runs skill", "local")
     Rel(claudecode, sys, "uploads flow-map zip via wizard", "HTTPS")
 ```
@@ -53,8 +55,12 @@ Linked to [`integrations.md`](integrations.md):
   verified `user_id` before forwarding to the deployed runtime.
 - **Claude Code** — host for the `flow-map-compiler` skill; runs on the discovery author's
   machine.
+- **Object store** — deployer-provided artifact blob backend (AWS S3, MinIO, GCS with HMAC,
+  R2, B2, any S3-API endpoint). Reached from `open-bbcd` via the `artifact-store-adapter`
+  (`s3_compatible` first kind) using deployer-configured credentials in
+  `artifact_stores.config`.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 2, § 5, § 7, ARCHITECTURE.md § Protocols on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2, § 5, § 7, ARCHITECTURE.md § Protocols on 2026-09-28. Updated 2026-09-28 for artifact-support — added Object store external system. -->
 
 ## System boundary
 
@@ -64,7 +70,7 @@ deployed runtime), `aikdm` (Python CLI, out-of-process), and the PostgreSQL 15+ 
 are built and released together in the DACdigital/OpenBBC monorepo.
 
 **Outside OpenBBC:** the customer's frontend + backend, the operator's auth gateway, the LLM
-providers, and the Claude Code runtime.
+providers, the Claude Code runtime, and the deployer-provided artifact object store.
 
 **Key gateway property:** the boundary between end user and `open-bbcd` is not defended by
 `open-bbcd` itself — every non-trusted-network deployment relies on the operator's gateway
