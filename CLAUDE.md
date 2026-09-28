@@ -22,8 +22,7 @@ The two axes are independent: an L2 module may host either a C1 or a C2 change.
 Filled by `/setup-project`:
 
 - **Project:** `openbbc-docs`
-- **Stack:** `<stack>`
-- **Service repos:** `<repo-1>` (`<type/lang>`), `<repo-2>` (`<type/lang>`), …
-- **Tracker:** platform `<plane|github|gitlab>`, org `<org>`, project `<project-id>`
-- **Git host:** platform `<github|gitlab>`, org `<org>`
-- **Comms channel (optional):** `<slack|discord>` `<channel>`
+- **Stack:** Go + Python (uv), PostgreSQL, htmx, AG-UI streaming, MCP-mediated backends; Claude Code plugin (`bbc-discovery/flow-map-compiler`)
+- **Service repos:** `openbbc` (Go/Python monorepo — see `docs/repos/openbbc.md` after Phase 3)
+- **Tracker:** platform `github`, org `DACdigital`, project `openbbc-docs`
+- **Git host:** platform `github`, org `DACdigital`
