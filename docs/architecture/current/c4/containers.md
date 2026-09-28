@@ -8,31 +8,31 @@ C4Container
     Person(admin, "Admin")
     Person(discauth, "Discovery author")
 
-    System_Ext(gateway, "Operator's gateway", "external ingress")
-    System_Ext(clientbe, "Client backend", "REST or MCP; two tool_backends kinds")
-    System_Ext(llm, "LLM providers", "Anthropic / OpenAI / Gemini")
+    System_Ext(gateway, "Operator gateway", "external ingress")
+    System_Ext(clientbe, "Client backend", "REST or MCP, two tool_backends kinds")
+    System_Ext(llm, "LLM providers", "Anthropic, OpenAI, Gemini")
 
     System_Boundary(sys, "OpenBBC") {
-        Container(fmc, "flow-map-compiler", "Claude Code skill (markdown + templates)", "Scans a client frontend repo, emits .flow-map/ (schema v2)")
-        Container(obbcd, "open-bbcd", "Go 1.22+, database/sql + lib/pq, html/template + htmx, goose migrations", "Backoffice UI + REST API + deployed agent runtime + MCP-over-REST bridge (single binary, no local disk state)")
-        Container(aikdm, "aikdm", "Python 3.12+, click, Google ADK + LiteLLM, Pydantic, Jinja2, uv", "Generate / evaluate / train agent bundles; DB-unaware, REST-only")
-        Container(aikdmrun, "aikdm-runner", "python:3.12-slim + bash + curl + tini + uv + aikdm + scripts/", "Kubernetes CronJob runtime: drains PENDING alphas / evals / trainings")
-        ContainerDb(db, "postgres", "PostgreSQL 15+", "Owns agents (+discovery_zip BYTEA), versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions")
+        Container(fmc, "flow-map-compiler", "Claude Code skill", "Scans a client frontend repo, emits flow-map schema v2")
+        Container(obbcd, "open-bbcd", "Go 1.22 plus", "Backoffice UI plus REST API plus deployed agent runtime plus MCP-over-REST bridge in a single binary, no local disk state")
+        Container(aikdm, "aikdm", "Python 3.12 plus uv", "Generate, evaluate, train agent bundles, DB-unaware and REST-only")
+        Container(aikdmrun, "aikdm-runner", "python 3.12 plus bash, curl, tini, uv, aikdm, scripts", "Kubernetes CronJob runtime that drains PENDING alphas, evals, trainings")
+        ContainerDb(db, "postgres", "PostgreSQL 15 plus", "Owns agents plus discovery_zip BYTEA, versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions")
     }
 
-    Rel(admin, obbcd, "backoffice + REST", "HTTPS / htmx")
+    Rel(admin, obbcd, "backoffice plus REST", "HTTPS and htmx")
     Rel(user, gateway, "chat", "HTTPS")
-    Rel(gateway, obbcd, "AG-UI + verified user_id", "SSE")
-    Rel(obbcd, clientbe, "tool calls (http_endpoint bridge OR mcp_client proxy)", "REST or MCP / SSE|HTTP")
-    Rel(obbcd, db, "reads/writes", "SQL")
-    Rel(obbcd, aikdm, "generate / evaluate / train (compose profile)", "REST + scripts")
+    Rel(gateway, obbcd, "AG-UI plus verified user_id", "SSE")
+    Rel(obbcd, clientbe, "tool calls via http_endpoint bridge OR mcp_client proxy", "REST or MCP over SSE or HTTP")
+    Rel(obbcd, db, "reads and writes", "SQL")
+    Rel(obbcd, aikdm, "generate, evaluate, train via compose profile", "REST plus scripts")
     Rel(aikdmrun, obbcd, "drain PENDING queues", "REST")
-    Rel(aikdmrun, db, "alpha drainer only: seed_bundle.py", "SQL")
+    Rel(aikdmrun, db, "alpha drainer only, seed_bundle.py", "SQL")
     Rel(aikdm, llm, "completions", "HTTPS")
     Rel(aikdmrun, llm, "completions", "HTTPS")
-    Rel(obbcd, llm, "chat + orchestration (Anthropic default)", "HTTPS")
+    Rel(obbcd, llm, "chat plus orchestration, Anthropic default", "HTTPS")
     Rel(discauth, fmc, "runs skill inside Claude Code", "local")
-    Rel(fmc, obbcd, "uploads .flow-map/ zip via wizard", "HTTPS")
+    Rel(fmc, obbcd, "uploads flow-map zip via wizard", "HTTPS")
 ```
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Components, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added aikdm-runner container, clarified client-backend integration as REST-bridge OR MCP-proxy, added agents.discovery_zip data ownership. -->
