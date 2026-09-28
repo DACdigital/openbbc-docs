@@ -1,0 +1,73 @@
+# System context
+
+## Diagram
+
+```mermaid
+C4Context
+    Person(user, "End user", "primary actor of the deployed agent")
+    Person(admin, "Admin / domain expert", "authors agents, curates datasets, drives evals + training")
+    Person(operator, "Operator", "runs cron + one-shot scripts against the REST API")
+    Person(discauth, "Discovery author", "runs the flow-map-compiler skill on target frontends")
+
+    System(sys, "OpenBBC platform", "Backoffice + REST + deployed agent runtime + aikdm")
+
+    System_Ext(gateway, "Operator's auth gateway", "verifies caller and rewrites user_id")
+    System_Ext(clientfe, "Client frontend", "consumes AG-UI")
+    System_Ext(clientbe, "Client backend (MCP-wrapped)", "exposes capabilities as MCP tools")
+    System_Ext(llmprov, "LLM providers", "Anthropic (default), OpenAI, Gemini via LiteLLM")
+    System_Ext(claudecode, "Claude Code", "Runtime that executes flow-map-compiler")
+
+    Rel(admin, sys, "backoffice UI + REST", "HTTPS / htmx")
+    Rel(operator, sys, "REST automation", "HTTPS")
+    Rel(user, gateway, "session cookie / bearer / mTLS", "HTTPS")
+    Rel(gateway, sys, "verified user_id passthrough", "HTTPS")
+    Rel(clientfe, sys, "chat", "AG-UI / SSE")
+    Rel(sys, clientbe, "tool calls", "MCP / SSE|HTTP")
+    Rel(sys, llmprov, "completions", "HTTPS")
+    Rel(discauth, claudecode, "runs skill", "local")
+    Rel(claudecode, sys, "uploads .flow-map/ zip via wizard", "HTTPS")
+```
+
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Protocols, DESIGN.md § Architecture Overview, PRODUCTION.md § 2 Integrating your frontend, § 5 Auth model on 2026-09-28 -->
+
+## External actors
+
+Linked to [`../bizbok/stakeholders.md`](../bizbok/stakeholders.md):
+
+- **End user** — consumes the deployed runtime via AG-UI (through the operator's gateway).
+- **Admin / domain expert** — privileged BO surface user.
+- **Operator** — REST automation caller (cron + one-shot scripts).
+- **Discovery author** — runs the `flow-map-compiler` Claude Code skill against a target
+  frontend repo.
+
+## External systems
+
+Linked to [`integrations.md`](integrations.md):
+
+- **Client frontend** — the customer's UI, speaks AG-UI to `open-bbcd`.
+- **Client backend (MCP-wrapped)** — the customer's business backend, exposes capabilities
+  over MCP (SSE / Streamable HTTP).
+- **LLM providers** — Anthropic (default for `open-bbcd`), OpenAI, Gemini (aikdm via
+  LiteLLM).
+- **Operator's auth gateway** — external ingress that verifies callers and injects a
+  verified `user_id` before forwarding to the deployed runtime.
+- **Claude Code** — host for the `flow-map-compiler` skill; runs on the discovery author's
+  machine.
+
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2, § 5, § 7, ARCHITECTURE.md § Protocols on 2026-09-28 -->
+
+## System boundary
+
+**Inside OpenBBC:** the `flow-map-compiler` skill (packaged as a Claude Code plugin from
+`bbc-discovery/flow-map-compiler/`), `open-bbcd` (Go daemon: backoffice UI + REST API +
+deployed runtime), `aikdm` (Python CLI, out-of-process), and the PostgreSQL 15+ store. All
+are built and released together in the DACdigital/OpenBBC monorepo.
+
+**Outside OpenBBC:** the customer's frontend + backend, the operator's auth gateway, the LLM
+providers, and the Claude Code runtime.
+
+**Key gateway property:** the boundary between end user and `open-bbcd` is not defended by
+`open-bbcd` itself — every non-trusted-network deployment relies on the operator's gateway
+to verify identity and inject `user_id`.
+
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 5 Auth model, ARCHITECTURE.md § Components on 2026-09-28 -->

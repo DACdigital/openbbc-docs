@@ -1,0 +1,14 @@
+# Stakeholders
+
+## Stakeholder catalog
+
+| Name | Role | Goals | Scope |
+|------|------|-------|-------|
+| End user | Human interacting with a deployed agent through the client frontend | Get task-relevant answers/actions from the agent, grounded in their session identity | Deployed runtime only (`/deployed/{agent_id}/*`); identified by an opaque `user_id` string trusted from the request after the operator's gateway has verified it |
+| Admin / domain expert | Backoffice user who authors agents, curates datasets, drives evals + training, and deploys versions | Ship a working agent for a specific backend and iterate on prompt quality | Full backoffice surface (`/`, `/agents/*`, `/agent_versions/*`, `/mcp*`, `/datasets*`, `/evals`, `/training-sessions`); privileged, network-gated |
+| Operator | Runs cron scripts (`process_pending_evals.sh`, `process_pending_trainings.sh`) and one-shot scripts (`run_eval.sh`, `train_from_session.sh`) against the REST API | Keep the PENDING queues drained; kick individual evals/trainings on demand | REST API automation surface (`/evals/*`, `/training-sessions/*`, `/datasets/*`, `/agents/*/deploy`); same trust boundary as the backoffice UI |
+| Discovery author | Runs the `flow-map-compiler` Claude Code skill against a target frontend repo | Produce a clean `.flow-map/` zip for the wizard to consume | Client-side (their own machine + the target frontend repo); no direct contact with `open-bbcd` |
+| Client backend owner | Operates the MCP-wrapped backend the deployed agent calls into | Expose backend capabilities as MCP tools that the agent can call within the user's permission scope | Indirect: their MCP server(s) are registered in `tool_backends` and consumed by `open-bbcd`; not a direct actor on any OpenBBC surface |
+| Operator's auth gateway | Ingress that authenticates the caller and rewrites `user_id` to a verified identity before forwarding to `open-bbcd` | Establish trust before requests reach `open-bbcd`, which is auth-agnostic | External to OpenBBC; operator-owned; required for any non-trusted-network deployment |
+
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 5 Auth model, § 6 Batch operations, ARCHITECTURE.md § Backoffice UI, DESIGN.md § Components on 2026-09-28 -->
