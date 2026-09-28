@@ -21,10 +21,12 @@ for the full environment table.
 
 <!-- migrated from _migration-quarantine/PRODUCTION.md § 1 Deploying open-bbcd, § 8 Known gaps, ARCHITECTURE.md § Docker deployment on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart shipped; open-bbcd stateless per mig 026). Corrected 2026-09-28 to drop Docker Compose from the shipping-paths list — it is a local-dev tool only. -->
 
-<!-- ARCH_GAP: no quantitative availability target sourced.
-     Section: Availability
-     Fill with: uptime SLO (e.g. 99.5%), MTTR target, planned maintenance windows.
-     See: .claude/skills/check-setup/arch-schema.md#nfrs -->
+N/A because OpenBBC ships as self-hosted open-source middleware and DAC does not operate
+any deployment; runtime SLOs (uptime, MTTR, maintenance windows) are set by the deployer
+against their own infrastructure. Shipping-time deployment constraints — single-replica
+default in the Helm chart, migrations run on boot via embedded `goose` so racing pods can
+corrupt migration state — live in [`constraints.md`](constraints.md) and
+[`assumptions.md § Open questions`](assumptions.md#open-questions).
 
 ## Performance
 
@@ -35,10 +37,13 @@ the `flock`. Evals are session-count-bound; the score formula is a global pass-r
 
 <!-- migrated from _migration-quarantine/PRODUCTION.md § 6 Batch operations, ARCHITECTURE.md § Evals on 2026-09-28 -->
 
-<!-- ARCH_GAP: no p50/p95/p99 targets for AG-UI turn latency, chat turn latency, MCP tool-call latency, or eval throughput sourced.
-     Section: Performance
-     Fill with: concrete latency + throughput targets per surface (deployed AG-UI turn, backoffice chat, MCP tool call, eval run wall-clock).
-     See: .claude/skills/check-setup/arch-schema.md#nfrs -->
+N/A because latency and throughput targets are operator-set per deployment; the shipped
+code carries no runtime SLO commitment. What the platform does prescribe is drainer cron
+cadence — alpha drainer at `*/5` (one aikdm LLM call per PENDING version, ~30–60s),
+eval drainer at `*/10`, training drainer at `*/15` (minutes-per-epoch under `flock`) —
+documented in [`bizbok/capabilities.md § Batch drainer operations`](bizbok/capabilities.md#l2-capabilities).
+Deployers set p50/p95/p99 for deployed AG-UI turns, backoffice chat, MCP tool calls, and
+eval wall-clock against their own workload.
 
 ## Security
 
@@ -65,14 +70,33 @@ SSO) for the backoffice surface over per-route allowlisting.
 
 ## Compliance
 
-<!-- ARCH_GAP: source describes no regulatory regime (GDPR / HIPAA / SOC2 / ISO27001 / PCI etc.) applying to OpenBBC itself.
-     Section: Compliance
-     Fill with: applicable regimes with scope statement, data classes affected, audit obligations.
-     See: .claude/skills/check-setup/arch-schema.md#nfrs -->
+N/A because OpenBBC ships as self-hosted open-source middleware and DAC does not operate
+any deployment; regulatory scope (GDPR, HIPAA, SOC 2, ISO 27001, PCI, …) is a deployer
+concern flowing through to whoever runs a deployment against their own data classes and
+user population. The concepts the platform stores are tagged coarsely in
+[`bizbok/information-map.md`](bizbok/information-map.md) under the *Regulatory tag* column
+(`system-metadata`, `user-content (deployer-classified)`, `credentials`) so a deployer's
+compliance analysis has a starting inventory.
 
 ## Observability
 
-<!-- ARCH_GAP: no observability targets sourced. Source mentions structured JSON errors on aikdm stderr (`{"error":"<kind>","details":"<msg>"}`) and cron scripts log to stdout with ISO-8601 timestamps, but no metrics/tracing/log-aggregation target.
-     Section: Observability
-     Fill with: metrics (RED / USE), traces (OpenTelemetry?), log aggregation endpoint, alerting rules, SLIs/SLOs.
-     See: .claude/skills/check-setup/arch-schema.md#nfrs -->
+### Logs
+
+- **`aikdm` non-zero exits** — structured JSON on stderr: `{"error":"<kind>","details":"<msg>"}`.
+  Exit codes: `1` unexpected, `2` input/config, `3` LLM. Stdout carries progress lines.
+- **`open-bbcd` and the three cron drainers** — ISO-8601 timestamped stdout.
+- **Retention** — cron/journald in Docker Compose (local dev); kubelet plus deployer's
+  log aggregator (Loki, ES, CloudWatch, …) in the k8s deployment. Not shipped by the chart.
+
+### Metrics, traces, alerts
+
+Not shipped. Deployer's telemetry stack attaches externally (OpenTelemetry sidecar,
+Prometheus exporter, log-based alerts of choice). The chart does not open a metrics port
+or wire tracing.
+
+### Health probes
+
+`open-bbcd healthcheck` subcommand probes `http://127.0.0.1:$SERVER_PORT/health`, exits
+`0` or `1`. Reads only `SERVER_PORT` so a broken `DATABASE_URL` cannot fail the probe.
+Used by the container `HEALTHCHECK` and reusable for k8s `livenessProbe` /
+`readinessProbe`.

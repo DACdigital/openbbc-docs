@@ -2,17 +2,17 @@
 
 ## Regulatory regimes
 
-<!-- ARCH_GAP: source describes no regulatory regime applying to OpenBBC as shipped.
-     Section: Regulatory regimes
-     Fill with: applicable regimes (GDPR / HIPAA / SOC2 / ISO27001 / PCI / …) with scope statements (which surfaces, which data classes).
-     See: .claude/skills/check-setup/arch-schema.md#constraints -->
+N/A because OpenBBC ships as self-hosted open-source middleware and DAC does not operate
+any deployment; regulatory scope is a deployer concern (see
+[`nfrs.md § Compliance`](nfrs.md#compliance)).
 
 ## Compliance obligations
 
-<!-- ARCH_GAP: no compliance obligations sourced. PRODUCTION.md notes hard-tenant isolation is not supported ("run one open-bbcd per tenant"), but no explicit obligation is stated.
-     Section: Compliance obligations
-     Fill with: obligations per regime (audit logging, data residency, retention, right-to-erasure, breach notification).
-     See: .claude/skills/check-setup/arch-schema.md#constraints -->
+N/A because OpenBBC ships as self-hosted open-source middleware and DAC does not operate
+any deployment; audit logging, data residency, retention, right-to-erasure, and breach
+notification obligations flow to whoever operates a deployment against their own data
+classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
+[`bizbok/information-map.md`](bizbok/information-map.md) for the concept inventory).
 
 ## Hard technical limits
 

@@ -20,10 +20,12 @@ agent version whose bundle strictly outperforms the parent's on the same input.
 
 ## Domain events
 
-<!-- ARCH_GAP: source does not name explicit domain events.
-     Section: Domain events
-     Fill with: `TrainingRequested` (Train button → PENDING), `TrainingStarted`, `TrainingEpochRan`, `TrainingCompleted` (with `new_version_id`), `TrainingFailed`.
-     See: .claude/skills/check-setup/arch-schema.md#ddd-context-file -->
+N/A because OpenBBC does not emit domain events on any transport. State transitions in
+this context are Postgres-only — `INSERT` / `UPDATE` against `training_sessions` — and
+downstream consumers poll the REST surface for status changes (the training drainer
+enumerates `GET /training-sessions.json?status=PENDING`; on DONE the agent-lifecycle
+context reads the new `agent_versions` row via `new_version_id` directly, again over
+REST).
 
 ## Invariants
 
