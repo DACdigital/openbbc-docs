@@ -23,6 +23,6 @@ Filled by `/setup-project`:
 
 - **Project:** `openbbc-docs`
 - **Stack:** Go + Python (uv), PostgreSQL, htmx, AG-UI streaming, MCP-mediated backends; Claude Code plugin (`bbc-discovery/flow-map-compiler`)
-- **Service repos:** `openbbc` (Go/Python monorepo — see `docs/repos/openbbc.md` after Phase 3)
+- **Service repos:** [`openbbc`](docs/repos/openbbc.md) — Go/Python monorepo (`open-bbcd` Go daemon + `aikdm` Python CLI + `bbc-discovery/flow-map-compiler` Claude Code plugin)
 - **Tracker:** platform `github`, org `DACdigital`, project `openbbc-docs`
 - **Git host:** platform `github`, org `DACdigital`
