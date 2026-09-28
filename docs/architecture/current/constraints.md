@@ -16,12 +16,19 @@
 
 ## Hard technical limits
 
-- **Postgres 15+ required.** `goose` migrations embedded (`//go:embed`) currently at
-  `024_training_sessions`.
+- **Postgres 15+ required.** `goose` migrations embedded (`//go:embed`), currently at
+  `026_agent_discovery_zip`.
 - **Go 1.22+, `database/sql` + `lib/pq`.** Runtime image is
   `gcr.io/distroless/static-debian12:nonroot`, CGO off.
 - **Python 3.12+ for `aikdm`, managed with `uv`.** Multi-provider LLM via Google ADK +
   LiteLLM (Anthropic, OpenAI, Gemini).
+- **`aikdm-runner` image is the k8s drainer runtime** (`Dockerfile.aikdm-runner`): bash +
+  curl + tini + python 3.12 + uv + `aikdm/` source + `scripts/`. Runs as uid 65532
+  (`runner`). Consumed by Helm chart CronJobs (alphas / evals / trainings).
+- **`agent_versions.status` state machine:** `INITIALIZING → PENDING → READY` via the alpha
+  drainer (migration 025); `READY → TRAINING → READY` on hill-climb; `READY → DEPLOYED` on
+  deploy. `INITIALIZING,PENDING,DRAFT,TRAINING,READY,DEPLOYED` are the enforced
+  `agent_versions_status_check` values.
 - **At most one `DEPLOYED` version per agent chain** (migration 011, DB-enforced singleton).
   Deploying a new version implicitly rotates the previous one.
 - **At most one `DRAFT` per dataset** (migration 019, partial unique index).
@@ -31,14 +38,19 @@
   (migration 020 dropped schema uniqueness to allow cross-version reuse within one dataset).
 - **`chat_message_feedback.judge_criteria` must be non-empty on every session's feedback rows
   before dataset close-draft succeeds.**
-- **Discovery-storage volume required.** `DISCOVERY_STORAGE_DIR` (default `/data/discovery`)
-  must be a persistent volume; it holds uploaded discovery zips referenced by every agent
-  version.
-- **Multi-replica deployments are not migration-safe** — a pre-deploy `open-bbcd migrate` job
-  must exit 0 before `serve` replicas start. Currently OK for single-instance compose.
+- **`open-bbcd` is stateless.** Discovery zip lives on `agents.discovery_zip BYTEA`
+  (migration 026); the deprecated `discovery_file_path` column is retained ignored for
+  reversibility. `DISCOVERY_STORAGE_DIR` is **not** required; `internal/storage/storage.go`
+  has been removed.
+- **Multi-replica deployments are not migration-safe.** Each open-bbcd pod runs migrations
+  on boot via embedded `goose`; concurrent boots race. The Helm chart ships a single
+  `Deployment` replica of `open-bbcd` by default.
 - **`open-bbcd` ships auth-agnostic** — no route enforces authentication or authorization.
   Every operator must front it with a gateway; direct exposure is unsafe.
 - **`deployed_sessions` cannot carry per-session header overrides today** — only chat and eval
   paths do.
+- **Three images published to GHCR** on every PR (same-repo only) / merge to `main` / `v*`
+  tag: `ghcr.io/dacdigital/openbbc/open-bbcd`, `.../aikdm-runner`, `.../aikdm`. Chart
+  `image.repository` defaults point at these paths.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). -->

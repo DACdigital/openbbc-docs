@@ -7,18 +7,27 @@
 Trigger: a discovery author points Claude Code at a target frontend repo.
 
 1. Discovery author runs [`flow-map-compilation`](capabilities.md#l2-capabilities) inside the
-   target frontend repo → `.flow-map/` zip.
+   target frontend repo → `.flow-map/` (schema v2) + zip. LOCKED anti-goal: no MCP server
+   code is generated — only a proposed endpoint inventory.
 2. Admin uploads the zip via `/agents/new` → [`agent-configuration`](capabilities.md#l2-capabilities)
-   captures flows, endpoints, and endpoint→backend wiring.
-3. Admin fleshes out scope, guardrails, personality in the configurator (still
-   [`agent-configuration`](capabilities.md#l2-capabilities)).
-4. [`agent-bundle-generation`](capabilities.md#l2-capabilities) runs the two-agent
-   generator+critic loop → agent v1 lands in Postgres (structural on `agents`, prompts on
-   `agent_versions`).
+   captures flows, endpoints, and endpoint→backend wiring. The zip is stored inline on
+   `agents.discovery_zip BYTEA` (migration 026); no persistent volume is used.
+3. For each discovered endpoint, admin binds a `tool_backends` row via
+   [`mcp-backend-management`](capabilities.md#l2-capabilities) — either an `http_endpoint`
+   (OpenBBC's [`mcp-over-rest-bridge`](capabilities.md#l2-capabilities) wraps a plain REST
+   endpoint as MCP for the agent) or an `mcp_client` (proxy to an existing MCP server).
+4. Admin fleshes out scope, guardrails, personality in the configurator, then hits Finalize
+   → root version transitions `INITIALIZING → PENDING` (migration 025).
+5. Operator (or a k8s CronJob) runs
+   [`alpha-drainer`](capabilities.md#l2-capabilities):
+   `process_pending_alphas.sh` → `generate_alpha.sh` runs
+   [`agent-bundle-generation`](capabilities.md#l2-capabilities) (aikdm generate-agent's
+   two-agent generator+critic loop) → `seed_bundle.py` writes the bundle to Postgres and
+   transitions the version `PENDING → READY`.
 
-Outcome: agent v1 exists, ready to test.
+Outcome: agent v1 in `READY` status, ready to test in the backoffice chat.
 
-<!-- migrated from _migration-quarantine/DESIGN.md § Phase 0, § Phase I, ARCHITECTURE.md § Data Flow / Flow 1 on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/DESIGN.md § Phase 0, § Phase I, ARCHITECTURE.md § Data Flow / Flow 1 on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — Finalize now asynchronous via alpha drainer + mig 025 PENDING state + mig 026 inline zip; clarified two tool_backends kinds. -->
 
 ### Feedback → dataset
 

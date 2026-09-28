@@ -2,12 +2,21 @@
 
 ## Availability
 
-Single-instance deployment is the shipping target today: one `open-bbcd` binary + one Postgres.
-Migrations auto-apply on boot via embedded `goose`. Multi-replica deployments are not
-migration-safe yet — running >1 replica requires a pre-deploy `open-bbcd migrate` job that exits
-0 before `serve` replicas start.
+Two shipping deployment paths as of OpenBBC PR #50:
+- **Docker Compose (single-instance)** — `docker-compose.yml` brings up Postgres + one
+  `open-bbcd`, with the plain `aikdm` image behind a compose profile.
+- **Kubernetes (Helm chart `deploy/helm/openbbc/`)** — open-bbcd `Deployment` (default one
+  replica) + `Service` + optional `Ingress`, optional in-cluster Postgres `StatefulSet`, and
+  three `CronJob`s (alphas, evals, trainings) running the `aikdm-runner` image.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1 Deploying open-bbcd, § 8 Known gaps, ARCHITECTURE.md § Docker deployment on 2026-09-28 -->
+`open-bbcd` is stateless (discovery zip lives in Postgres per migration 026), so scaling out
+the app tier is a matter of replica count — **except** that migrations still run on boot via
+embedded `goose` and racing pods can corrupt the migration state. Multi-replica
+deployment is therefore not migration-safe today; the chart ships one replica by default and
+a proper fix (goose `Provider` + `SessionLocker`, or a pre-install migrations `Job`) is
+tracked as an open question in `assumptions.md`.
+
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1 Deploying open-bbcd, § 8 Known gaps, ARCHITECTURE.md § Docker deployment on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart shipped; open-bbcd stateless per mig 026). -->
 
 <!-- ARCH_GAP: no quantitative availability target sourced.
      Section: Availability

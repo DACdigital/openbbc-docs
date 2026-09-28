@@ -9,19 +9,30 @@ sequenceDiagram
     participant Admin as Admin (BO)
     participant OBBCD as open-bbcd
     participant DB as postgres
+    participant Runner as aikdm-runner (CronJob or one-shot)
     participant AIK as aikdm
 
     DA->>CC: run skill against target frontend repo
-    CC-->>DA: .flow-map/ tree + zip
+    CC-->>DA: .flow-map/ tree (AGENTS.md, APP.md, glossary, skills/, flows/, endpoints/) + zip
     Admin->>OBBCD: POST /agents/new (upload zip via wizard)
-    OBBCD->>DB: INSERT agents (architecture, capabilities)
-    OBBCD->>AIK: aikdm generate-agent (via scripts/*.sh + REST)
-    AIK-->>OBBCD: bundle.yaml (main_prompt, capabilities[], skills[], external_actions[])
-    OBBCD->>DB: INSERT agent_versions v1 (prompts JSONB)
-    OBBCD-->>Admin: agent + v1 detail
+    OBBCD->>DB: INSERT agents (architecture, capabilities, discovery_zip BYTEA per mig 026)
+    OBBCD->>DB: INSERT agent_versions (v1, status=INITIALIZING)
+    Admin->>OBBCD: configure scope, guardrails, personality; bind tool_backends per endpoint
+    Admin->>OBBCD: POST Finalize
+    OBBCD->>DB: UPDATE agent_versions SET status=PENDING (mig 025)
+    Note over Runner: cron: */5 * * * * process_pending_alphas.sh<br/>(k8s: cronjob-alphas)
+    Runner->>OBBCD: GET /agent_versions.json?status=PENDING
+    OBBCD-->>Runner: [{id, ...}, ...]
+    loop per PENDING version
+        Runner->>OBBCD: GET config for version
+        Runner->>AIK: uv run aikdm generate-agent --config ... --output bundle.yaml
+        AIK-->>Runner: bundle.yaml
+        Runner->>DB: seed_bundle.py: UPSERT prompts + UPDATE status=READY (single txn)
+    end
+    OBBCD-->>Admin: PENDING badge → READY badge (agent version detail refreshes)
 ```
 
-<!-- migrated from _migration-quarantine/DESIGN.md § Phase 0, § Phase I, ARCHITECTURE.md § Data Flow / Flow 1 on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/DESIGN.md § Phase 0, § Phase I, ARCHITECTURE.md § Data Flow / Flow 1 on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — Finalize is now an async transition to PENDING, drained by the aikdm-runner CronJob; mig 026 keeps the zip inline. -->
 
 ## Feedback → dataset
 
