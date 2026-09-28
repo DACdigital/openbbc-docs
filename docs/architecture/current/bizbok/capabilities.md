@@ -26,8 +26,10 @@
    (artifacts) exchanged inside chat and deployed sessions. Cross-cutting substrate: bytes
    live in a deployer-configured artifact store behind a pluggable adapter; `open-bbcd`
    holds only refs. Consumed by `Feedback & dataset curation` (via `chat-artifacts`) and
-   `Deployed agent runtime` (via `deployed-runtime-artifacts`); parallels
-   `mcp-backend-management` in shape (kinds + opaque config + adapter contract).
+   `Deployed agent runtime` (via `deployed-runtime-artifacts`). Store registry is loaded
+   **at boot from env vars** — there is no REST / BO surface for adding, removing, or
+   reconfiguring stores at runtime; credentials handling matches the LLM-API-key pattern,
+   not the `tool_backends` pattern.
 
 <!-- migrated from _migration-quarantine/DESIGN.md § Flow (phases 0–V), ARCHITECTURE.md § Components on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added "Batch drainer operations" L1 to cover the alpha drainer and Helm CronJobs. Updated 2026-09-28 for artifact-support — added "Artifact management" L1. -->
 
@@ -82,8 +84,9 @@
   `EmbeddedResource` is unpacked into an `artifact_ref` content block on a `tool`-role
   message; assistant emits an `artifact_ref` in its content block; assistant references an
   existing artifact when calling a tool. Artifact refs persist on `chat_messages.content`
-  JSONB; bytes live in the artifact store selected via `artifact-store-management`. Dataset
-  close-draft captures refs verbatim so replay stays deterministic.
+  JSONB; bytes live in the env-configured default artifact store (see
+  `artifact-store-adapter`). Dataset close-draft captures refs verbatim so replay stays
+  deterministic.
 
 **Under Evaluation:**
 - `eval-run` — kick off an eval (BO Evaluate button → PENDING row → `scripts/run_eval.sh`
@@ -124,15 +127,17 @@
   Suggested `*/15 * * * *`; k8s CronJob `cronjob-trainings.yaml`.
 
 **Under Artifact management:**
-- `artifact-store-management` — CRUD over `artifact_stores` (kind + opaque `config` JSONB +
-  optional `is_default` flag), test-connection before saving, exactly one `is_default = true`
-  at a time. Admin-only surface; parallels `mcp-backend-management` in shape.
 - `artifact-store-adapter` — pluggable interface inside `open-bbcd` wrapping each artifact
   store behind a `put(bytes, mime) → uri`, `get(uri) → bytes | signed_url`, `delete(uri)`,
   `stat(uri)` contract. First shipped kind: `s3_compatible` (covers AWS S3, MinIO, GCS-HMAC,
-  R2, B2, any S3-API endpoint). Storage kind is deployer-selected via
-  `artifact-store-management`; adapter config lives in `artifact_stores.config`. Uploads are
-  bounded by `ARTIFACT_MAX_UPLOAD_MB` (see [`../constraints.md`](../constraints.md)).
+  R2, B2, any S3-API endpoint). **Store registry is loaded at boot from env vars** —
+  `ARTIFACT_STORE_<ID>_KIND` plus kind-specific config vars (e.g. `_ENDPOINT`, `_BUCKET`,
+  `_ACCESS_KEY`, `_SECRET_KEY` for `s3_compatible`); `ARTIFACT_STORE_DEFAULT=<ID>`
+  nominates which store new writes go to. `<ID>` becomes the `store_id` on every
+  `artifact_ref` block — must be stable across deploys or historical refs stop resolving.
+  Reads route via ref's `store_id` (each blob knows its store); writes route to the
+  default. Uploads are bounded by `ARTIFACT_MAX_UPLOAD_MB` (see
+  [`../constraints.md`](../constraints.md)).
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, DESIGN.md § Flow, § Resources on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING state, 026 discovery_zip inline, alpha drainer + eval/training drainers as k8s CronJobs, mcp-over-rest-bridge L2 capability, flow-map schema v2). Updated 2026-09-28 for artifact-support — added chat-artifacts, deployed-runtime-artifacts, artifact-store-management, artifact-store-adapter. -->
 
@@ -163,7 +168,6 @@
 | `training-drainer` | [training](../ddd/contexts/training.md) | [aikdm-runner](../c4/containers.md#aikdm-runner) |
 | `chat-artifacts` | [feedback-datasets](../ddd/contexts/feedback-datasets.md), [artifacts](../ddd/contexts/artifacts.md) | [open-bbcd](../c4/containers.md#open-bbcd) |
 | `deployed-runtime-artifacts` | [deployed-runtime](../ddd/contexts/deployed-runtime.md), [artifacts](../ddd/contexts/artifacts.md) | [open-bbcd](../c4/containers.md#open-bbcd) |
-| `artifact-store-management` | [artifacts](../ddd/contexts/artifacts.md) | [open-bbcd](../c4/containers.md#open-bbcd) |
 | `artifact-store-adapter` | [artifacts](../ddd/contexts/artifacts.md) | [open-bbcd](../c4/containers.md#open-bbcd) |
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § Components, § MCP wiring, DESIGN.md § Flow on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (new drainers + mcp-over-rest-bridge rows). Updated 2026-09-28 for artifact-support — four new rows across artifacts + feedback-datasets + deployed-runtime. -->

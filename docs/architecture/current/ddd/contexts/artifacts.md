@@ -12,10 +12,12 @@ adapter (see [`../../c4/integrations.md`](../../c4/integrations.md)).
 
 ## Aggregates & entities
 
-- **Artifact store** (aggregate root) — `artifact_stores` row. Fields: `id`, `name`,
-  `kind ∈ {s3_compatible, …}`, `config` JSONB (endpoint, bucket, region, credentials — treat
-  as secrets), `is_default BOOLEAN` (partial unique index — exactly one true at a time),
-  `created_at`, `updated_at`. Shape parallels `tool_backends`.
+- **Artifact-store registry** (aggregate root — in-memory, not persisted) — populated at
+  `open-bbcd` boot from env vars: for each `<ID>`, `ARTIFACT_STORE_<ID>_KIND ∈
+  {s3_compatible, …}` plus kind-specific config (endpoint, bucket, region, credentials).
+  `ARTIFACT_STORE_DEFAULT=<ID>` nominates the write target. The registry is redeploy-
+  immutable; there is no runtime CRUD. `<ID>` is the `store_id` embedded in every
+  `artifact_ref` block.
 - **Artifact reference** (value object embedded in `chat_messages.content` /
   `deployed_messages.content` JSONB) — an `artifact_ref` content block: `{type:
   "artifact_ref", store_id, uri, mime, size_bytes, sha256}`. Not a standalone entity — has
@@ -23,31 +25,46 @@ adapter (see [`../../c4/integrations.md`](../../c4/integrations.md)).
   is `(store_id, uri)`. Multiple messages may reference the same blob (e.g. tool result
   re-referenced in an assistant follow-up).
 
-There is **no `artifacts` table**. The framework does not maintain a separate index of
-uploaded blobs — the source of truth for "which artifacts exist" is the union of
-`artifact_ref` blocks embedded in message content across all sessions. This keeps the
-context stateless beyond the store-configuration row.
+There is **no `artifacts` table** and **no `artifact_stores` table**. Postgres holds only
+`artifact_ref` blocks embedded in message content; the store registry lives in process
+memory, hydrated from env at boot. The source of truth for "which artifacts exist" is the
+union of `artifact_ref` blocks across all sessions; the source of truth for "which stores
+exist" is the deploy-time env manifest. This keeps the context stateless in the DB.
 
 ## Domain events
 
-N/A because OpenBBC does not emit domain events on any transport. State transitions here are
-Postgres-only (`INSERT` / `UPDATE` / `DELETE` on `artifact_stores`) plus HTTP calls to the
-external object store via the adapter (which are not domain events — they are outbound
-integration calls). Downstream consumers observe state changes by reading the REST /
-adapter surface, not a bus.
+N/A because OpenBBC does not emit domain events on any transport. The only state this
+context owns is the in-memory store registry (loaded once at boot from env, immutable at
+runtime) plus outbound HTTP calls to the external object store via the adapter — neither
+is a domain event. Downstream consumers observe artifact activity by reading `artifact_ref`
+blocks off message content or by calling the session-scoped read surface, not through a
+bus.
 
 ## Invariants
 
-- **Exactly one `is_default = true` artifact store at any time** — partial unique index on
-  `artifact_stores (is_default) WHERE is_default = true`. Fresh deployments start with zero;
-  admin picks one before the first artifact-carrying turn is accepted.
+- **Store registry is boot-time env-driven, not runtime-mutable.** Stores are declared via
+  `ARTIFACT_STORE_<ID>_*` env vars; the registry is hydrated once at `open-bbcd` boot and
+  is immutable thereafter. Adding, removing, or reconfiguring a store requires a redeploy.
+  There is no REST / BO surface for store CRUD — this is intentional (parity with
+  LLM-API-key handling, not with `tool_backends`).
+- **Exactly one `ARTIFACT_STORE_DEFAULT` at boot.** Nominates which store new writes go
+  to. If unset and any capability that emits `artifact_ref` blocks is exercised, the
+  request is rejected with a clear error. Refs already stored under a previous default
+  remain resolvable via their embedded `store_id` — flipping the default (across
+  redeploys) does not break history.
+- **Read/write asymmetry.** *Writes* always target the env-nominated
+  `ARTIFACT_STORE_DEFAULT`. *Reads* route via the `store_id` embedded in the ref — every
+  blob knows its store, so old refs keep working after the default flips. Consequence:
+  multiple stores can coexist in the registry; only one drives fresh writes at a time.
 - **Bytes never live in Postgres.** `chat_messages.content` and `deployed_messages.content`
   hold only refs (`{store_id, uri, mime, size_bytes, sha256}`); the artifact-store adapter
   is the only surface that touches blob bytes.
 - **Refs are immutable once written to a message.** A blob referenced from a locked chat
-  session (dataset-closed) must remain resolvable — deletion of the underlying blob or its
-  hosting `artifact_stores` row while any locked session references it is rejected at the
-  repo layer (dataset-close-draft snapshots the ref, not the bytes; replay must resolve).
+  session (dataset-closed) must remain resolvable — deletion of the underlying blob while
+  any locked session references it is rejected at the repo layer; removing the referenced
+  store id from the deploy env would likewise strand refs and is the deployer's
+  responsibility to avoid (dataset-close-draft snapshots the ref, not the bytes; replay
+  must resolve).
 - **`ARTIFACT_MAX_UPLOAD_MB` gates ingest, not retrieval.** Uploads exceeding the env-var
   cap are rejected at the upload boundary; a ref already stored from a lower prior cap
   remains readable.
@@ -61,12 +78,10 @@ adapter surface, not a bus.
 
 ## Published surface
 
-- **REST (BO / admin):**
-  - `GET/POST /artifact-stores`, `PATCH /artifact-stores/{id}`,
-    `DELETE /artifact-stores/{id}` — CRUD.
-  - `POST /artifact-stores/{id}/test-connection` — round-trip a small write+read+delete
-    against the configured backend.
-  - `POST /artifact-stores/{id}/set-default` — flip the `is_default` flag atomically.
+- **Read-only admin visibility (optional, not required by this context):** an operator or
+  admin can observe the loaded registry through `GET /health` or a diagnostic endpoint —
+  the shape is not part of the published contract. **No** REST CRUD, test-connection, or
+  set-default routes exist; the registry cannot be mutated at runtime.
 - **REST (session-scoped):**
   - `POST /chat-sessions/{id}/artifacts` and
     `POST /deployed/{agent_id}/sessions/{sid}/artifacts?user_id=X` (multipart) — inbound
@@ -80,5 +95,9 @@ adapter surface, not a bus.
   blocks verbatim; only this context calls the store adapter.
 - **Consumed contract from external object store:** artifact-store adapter interface (see
   [`../../c4/integrations.md § Contracts`](../../c4/integrations.md#contracts)) — put, get
-  or sign, delete, stat. Adapter-config schemas per kind live in
-  [`../../c4/integrations.md`](../../c4/integrations.md).
+  or sign, delete, stat. Adapter-config env-var schemas per kind live alongside the kind
+  registration in [`../../c4/integrations.md`](../../c4/integrations.md).
+- **Consumed contract from deploy env:** `ARTIFACT_STORE_<ID>_*` variables (one set per
+  registered store) plus `ARTIFACT_STORE_DEFAULT=<ID>` (nominated write target) plus
+  `ARTIFACT_MAX_UPLOAD_MB` (per-upload cap). Parsed once at boot; failure to parse is a
+  boot-time error.

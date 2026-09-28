@@ -100,8 +100,10 @@ Trigger: user or admin needs to exchange a file with the agent — inbound (cont
 image the agent reasons about, document to summarise) or outbound (chart, report, generated
 image, tool-produced artefact).
 
-1. Operator has configured at least one artifact store via
-   [`artifact-store-management`](capabilities.md#l2-capabilities) and marked it `is_default`.
+1. Operator has declared at least one artifact store at deploy time via
+   `ARTIFACT_STORE_<ID>_*` env vars and set `ARTIFACT_STORE_DEFAULT=<ID>`
+   ([`artifact-store-adapter`](capabilities.md#l2-capabilities) loads the registry at
+   boot).
 2. User submits a turn carrying an inline file (multipart on the BO chat path via
    [`chat-artifacts`](capabilities.md#l2-capabilities); AG-UI-side upload endpoint on the
    deployed path via [`deployed-runtime-artifacts`](capabilities.md#l2-capabilities)) —

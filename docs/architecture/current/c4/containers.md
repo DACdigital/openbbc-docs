@@ -18,7 +18,7 @@ C4Container
         Container(obbcd, "open-bbcd", "Go 1.22 plus", "Backoffice UI plus REST API plus deployed agent runtime plus MCP-over-REST bridge plus artifact-store-adapter in a single binary, no local disk state")
         Container(aikdm, "aikdm", "Python 3.12 plus uv", "Generate, evaluate, train agent bundles, DB-unaware and REST-only")
         Container(aikdmrun, "aikdm-runner", "python 3.12 plus bash, curl, tini, uv, aikdm, scripts", "Kubernetes CronJob runtime that drains PENDING alphas, evals, trainings")
-        ContainerDb(db, "postgres", "PostgreSQL 15 plus", "Owns agents plus discovery_zip BYTEA, versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions, artifact_stores config plus artifact_ref content blocks embedded in message content JSONB")
+        ContainerDb(db, "postgres", "PostgreSQL 15 plus", "Owns agents plus discovery_zip BYTEA, versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions, and artifact_ref content blocks embedded in message content JSONB. No artifact-store configuration in DB — registry is env-driven")
     }
 
     Rel(admin, obbcd, "backoffice plus REST", "HTTPS and htmx")
@@ -89,14 +89,15 @@ contexts: `agents` (+ `discovery_zip BYTEA` migration 026), `agent_versions` (`s
 `capabilities[]`, `tool_backends`, `agent_endpoint_backend`, `agent_version_mcp_backend`,
 `chat_sessions` + `chat_messages` + `chat_message_feedback`, `datasets` + `dataset_versions`
 + `dataset_version_sessions`, `evals` + `eval_sessions`, `training_sessions`,
-`deployed_sessions` + `deployed_messages`, and `artifact_stores` (kind + config +
-`is_default` flag; artifact bytes live in the external Object store — this row only holds
-configuration + a partial-unique-index-enforced default selector). **No local disk state
-required** — after migration 026 inlined the discovery zip on `agents.discovery_zip BYTEA`
-the process reads and writes only Postgres (`DISCOVERY_STORAGE_DIR` env var no longer read;
+`deployed_sessions` + `deployed_messages`. **No local disk state required** — after
+migration 026 inlined the discovery zip on `agents.discovery_zip BYTEA` the process reads
+and writes only Postgres (`DISCOVERY_STORAGE_DIR` env var no longer read;
 `internal/storage/storage.go` removed). Artifact bytes never touch Postgres — they flow
 through the `artifact-store-adapter` to the deployer-provided Object store (see
 [`integrations.md`](integrations.md) and [`../ddd/contexts/artifacts.md`](../ddd/contexts/artifacts.md)).
+The artifact-store registry is held in-memory only, hydrated at boot from env vars
+(`ARTIFACT_STORE_<ID>_*` + `ARTIFACT_STORE_DEFAULT`); Postgres holds only `artifact_ref`
+blocks embedded in message-content JSONB, never store configuration or credentials.
 
 **Published API / events.**
 - REST (JSON): `/evals/*`, `/training-sessions/*`, `/datasets/*`, `/agents/*/deploy`,

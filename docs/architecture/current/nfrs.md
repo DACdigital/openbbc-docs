@@ -67,13 +67,16 @@ identity, forward to `open-bbcd`. Prefer network reachability restrictions (priv
 SSO) for the backoffice surface over per-route allowlisting.
 
 **Artifact-store credentials and refs.** With the `artifact-support` capability, `open-bbcd`
-holds server-to-server credentials for the deployer's Object store in
-`artifact_stores.config` (secrets, same handling class as `tool_backends.config`). Artifact
-reads are session-scoped: `GET /artifacts/{store_id}/{uri}?session_id=…&user_id=…` returns
-404 on session/user mismatch (same trust boundary as messages) — an `artifact_ref`
-`{store_id, uri}` pair is not a bearer capability. When an adapter returns a presigned URL
-in place of proxied bytes, the URL inherits the store's TTL and access is auditable through
-the deployer's object-store logs.
+reads server-to-server credentials for the deployer's Object store **from env vars**
+(`ARTIFACT_STORE_<ID>_ACCESS_KEY`, `_SECRET_KEY`, and equivalents per kind) — same handling
+class as LLM provider keys, not persisted in Postgres. This is a stronger posture than
+`tool_backends.config`: one fewer secret class in the DB, and the credentials never leave
+the deploy-time env / operator secret store. Artifact reads are session-scoped:
+`GET /artifacts/{store_id}/{uri}?session_id=…&user_id=…` returns 404 on session/user
+mismatch (same trust boundary as messages) — an `artifact_ref` `{store_id, uri}` pair is
+not a bearer capability. When an adapter returns a presigned URL in place of proxied
+bytes, the URL inherits the store's TTL and access is auditable through the deployer's
+object-store logs.
 
 <!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model on 2026-09-28. Updated 2026-09-28 for artifact-support — added artifact-store credentials + ref-access model. -->
 

@@ -71,8 +71,8 @@ Every container in [`containers.md`](containers.md) is placed:
   put/get/delete via the `artifact-store-adapter` all cross the boundary. Tool calls carry
   server-to-server credentials bound to the `tool_backends` row (plus per-backend
   `header_overrides` in the BO chat and eval paths — not on the deployed path). Object-store
-  credentials come from `artifact_stores.config` (same secret-handling class as
-  `tool_backends.config`).
+  credentials come from **env vars** (`ARTIFACT_STORE_<ID>_*`) — same secret-handling
+  class as LLM provider API keys, not persisted in Postgres.
 - **Job ↔ App** — `aikdm-runner` reaches `open-bbcd` via REST for all three drainers.
   Compose-profile `aikdm` uses the same path.
 
@@ -142,7 +142,7 @@ flowchart TB
 | App ↔ Data | **Denial of service** — misbehaved migration on multi-replica boot races Postgres. | Currently mitigated by the Helm chart shipping one `open-bbcd` `Deployment` replica by default. Scaling `openbbcd.replicaCount > 1` needs the follow-up work tracked in `assumptions.md`: goose `Provider` + `SessionLocker`, or a pre-install migrations `Job` in the chart. |
 | Public ↔ App | **Denial of service** — no rate limits on the deployed runtime. | ARCH_GAP — no rate-limit / abuse-control policy sourced. Rely on gateway for now. |
 | App ↔ External integration | **Provider credential leak** — LLM provider API key exposure. | Keys must come from platform secret store in production, not `.env`. `open-bbcd` and `aikdm` read `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` from env only. |
-| App ↔ External integration | **Artifact-store credential leak / tenant crossover.** Object-store credentials in `artifact_stores.config` are shared server-to-server; a leak grants blob-store access; a mis-scoped bucket lets one deployment see another's artifacts. | Store credentials in `artifact_stores.config` are handled as secrets (same class as `tool_backends.config`). Deployers scope buckets per deployment or per tenant; the framework does not enforce cross-`artifact_stores.id` isolation beyond adapter-level bucket boundaries. |
+| App ↔ External integration | **Artifact-store credential leak / tenant crossover.** Object-store credentials (`ARTIFACT_STORE_<ID>_ACCESS_KEY`, `_SECRET_KEY`) are shared server-to-server; a leak grants blob-store access; a mis-scoped bucket lets one deployment see another's artifacts. | Credentials come from env / operator secret store (same class as LLM provider API keys), never from `.env` files in production and never persisted in Postgres. Deployers scope buckets per deployment or per tenant; the framework does not enforce cross-`store_id` isolation beyond adapter-level bucket boundaries. |
 | App ↔ External integration | **Artifact ref leak → cross-user read.** A leaked `{store_id, uri}` pair could bypass session-scope if the read route accepted refs without session context. | `GET /artifacts/{store_id}/{uri}` requires `session_id` + `user_id` query params and returns 404 on mismatch — the ref alone is not a bearer capability. Presigned URLs (when the adapter returns them) inherit the store's TTL and are logged for audit by the deployer's log aggregator. |
 | Public ↔ App | **Denial of service via oversized artifact upload.** Attacker POSTs a very large body to the artifact upload endpoint. | `ARTIFACT_MAX_UPLOAD_MB` env var gates ingest at the upload boundary; the gateway may impose an additional body-size limit. |
 

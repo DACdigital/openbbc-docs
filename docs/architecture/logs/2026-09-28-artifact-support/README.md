@@ -92,5 +92,38 @@ them", upheld by `artifacts` refusing deletion of blobs referenced by locked cha
   upload DoS).
 - + `docs/architecture/logs/2026-09-28-artifact-support/README.md` (this file).
 
+**Amendments during PR review** (2026-09-28, same day):
+- **Removed the `artifact-store-management` L2 capability and its REST/BO surface.**
+  Original design put artifact stores on a BO CRUD path (parallel to `tool_backends`); the
+  amended design drives the store registry entirely from **env vars** at `open-bbcd` boot
+  (`ARTIFACT_STORE_<ID>_KIND`, per-kind config vars, `ARTIFACT_STORE_DEFAULT=<ID>`). No
+  `artifact_stores` Postgres table; no `POST /artifact-stores/*` routes; no BO UI. The
+  registry is redeploy-immutable at runtime. Rationale: (a) keeps blob-store credentials
+  out of Postgres entirely — same secret-handling class as LLM provider API keys, one
+  fewer secret class in the DB; (b) makes install reproducible from a single env manifest
+  (CI/CD / Helm-friendly); (c) removes an admin-surface concept that never needs runtime
+  mutation for a healthy deployment (store config is deploy-time infrastructure, not
+  domain data). Trade-off: adding or reconfiguring a store requires a redeploy — accepted
+  because store changes are rare, and historical refs remain resolvable across default
+  flips via the `store_id` embedded in each ref.
+- **Made the read/write routing split explicit** in `ddd/contexts/artifacts.md §
+  Invariants` — writes route to the env-nominated default; reads route via the `store_id`
+  on the ref. This was implicit in the first draft; making it explicit answers the
+  question "what happens to old refs when I switch the default", which every implementer
+  and every future spec reader needs to know without re-deriving.
+- **Updated Impact list scope**: `bizbok/capabilities.md` L2 count drops from four new
+  entries to three (removed `artifact-store-management`); `bizbok/information-map.md`
+  Artifact-store row rewritten from "row in `artifact_stores`" to "in-memory entry in
+  the boot-time registry"; `ddd/access-model.md` Admin CRUD policy loses the
+  artifact-store-management scope; an Operator (deploy-time) policy is added for env-var
+  declaration; `c4/integrations.md` credential column rewritten env-first; `c4/deployment.md`
+  threat model updated accordingly; `ddd/contexts/artifacts.md` Aggregates rewritten
+  (registry, not row) and Published surface loses the CRUD routes; `constraints.md`
+  invariants for `is_default` DB flag replaced with env-var equivalents. `c4/context.md`,
+  `c4/containers.md` diagram, `ddd/context-map.md`, `ddd/contexts/feedback-datasets.md`,
+  `ddd/contexts/deployed-runtime.md`, `bizbok/value-streams.md`, `nfrs.md § Security`,
+  `assumptions.md` locked-decision — updated where they named the old CRUD surface, but
+  the shape of each entry stayed the same.
+
 **Links**:
 - (user may add related spec PRs or tracker items before merge)

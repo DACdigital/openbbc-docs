@@ -8,7 +8,7 @@
 | Operator's auth gateway | Inbound trust mediator | HTTPS (whatever the gateway speaks upstream: session cookie, bearer, mTLS, SSO) | Gateway-owned; injects a verified `user_id` before forwarding to `open-bbcd` | Operator-owned; ARCH_GAP for internal policy |
 | Claude Code (`flow-map-compiler`) | Discovery-side skill host | Local IPC (Claude Code plugin API) | Runs client-side on the discovery author's machine; the resulting zip is uploaded via wizard authenticated by the same operator gateway that fronts the backoffice | ARCH_GAP |
 | GHCR (`ghcr.io/dacdigital/openbbc/*`) | Outbound (build/publish) + inbound (pull to k8s) | OCI registry API | GHCR PAT for publish (via `GITHUB_TOKEN` in `.github/workflows/publish-images.yml`); anonymous or `imagePullSecrets` for pull depending on package visibility | Images `open-bbcd`, `aikdm-runner`, `aikdm`; tags `pr-<num>`, `main`, `sha-<short>`, semver, `latest` |
-| Object store (deployer-provided) | Outbound artifact-store backend | S3 API over HTTPS (first-shipped `s3_compatible` `artifact-store-adapter` kind — covers AWS S3, MinIO, GCS with HMAC, R2, B2, any S3-API endpoint). Framework-side call surface is uniform `put`/`get`/`sign`/`delete`/`stat`; wire is adapter-specific. | Credentials in `artifact_stores.config` JSONB (access key + secret; endpoint URL; bucket; region; optional path-style flag). Treat as secrets — same handling class as `tool_backends.config`. | Deployer-owned SLA; ARCH_GAP for internal-policy targets. Regulatory tag: user-content (deployer-classified) — bytes are chat / deployed artifacts. |
+| Object store (deployer-provided) | Outbound artifact-store backend | S3 API over HTTPS (first-shipped `s3_compatible` `artifact-store-adapter` kind — covers AWS S3, MinIO, GCS with HMAC, R2, B2, any S3-API endpoint). Framework-side call surface is uniform `put`/`get`/`sign`/`delete`/`stat`; wire is adapter-specific. | Credentials from **env vars only** — per-store `ARTIFACT_STORE_<ID>_ACCESS_KEY`, `_SECRET_KEY`, `_ENDPOINT`, `_BUCKET`, `_REGION`, optional path-style flag; `ARTIFACT_STORE_DEFAULT=<ID>` nominates the write target. Same secret class as LLM provider API keys (not persisted in Postgres). | Deployer-owned SLA; ARCH_GAP for internal-policy targets. Regulatory tag: user-content (deployer-classified) — bytes are chat / deployed artifacts. |
 
 <!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 3 MCP layer, § 4 Headers, § 5 Auth model, § 7 Provider LLM keys, ARCHITECTURE.md § Protocols, § flow-map-compiler on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — client-backend row split into REST-bridge/MCP-proxy alternatives; GHCR row added. Updated 2026-09-28 for artifact-support — added Object store row. -->
 
@@ -40,15 +40,18 @@
   JSON list surfaces the k8s CronJobs and one-shot scripts use to enumerate PENDING work.
 - **Artifact-store adapter interface (open-bbcd internal → object store).** Uniform
   framework-side contract, adapter-per-kind wire translation:
-  - `put(bytes, mime) → {uri, size_bytes, sha256}`
-  - `get(uri) → bytes` OR `sign(uri, ttl) → https_url`
+  - `put(bytes, mime) → {uri, size_bytes, sha256}` — routes to the env-nominated
+    `ARTIFACT_STORE_DEFAULT`
+  - `get(uri) → bytes` OR `sign(uri, ttl) → https_url` — routes to the store named by the
+    `store_id` embedded in the calling `artifact_ref`
   - `stat(uri) → {mime, size_bytes, sha256, exists}`
   - `delete(uri)`
-  - `test() → ok | error` (round-trip small write+read+delete under the configured
-    credentials; drives the BO "Test connection" button)
-  Kinds are versioned via the `artifact_stores.kind` string. First-shipped kind:
-  `s3_compatible`. Adapter config schema per kind is declared alongside the kind
-  registration (analogous to `tool_backends.kind` + `config` JSONB schemas).
+  - `probe() → ok | error` — boot-time self-check per registered store; fails boot on
+    unreachable credentials for the default store
+  Kinds are versioned via the env-var `KIND` value. First-shipped kind: `s3_compatible`.
+  Adapter config schema per kind is a set of `ARTIFACT_STORE_<ID>_*` env-var names declared
+  alongside the kind registration in code (not a runtime plug-in surface). No REST CRUD,
+  test-connection button, or BO UI exists for stores — reconfiguration is a redeploy.
 - **AG-UI `ARTIFACT_REF` event-type extension (open-bbcd → client frontend).**
   Complements the base AG-UI events (`RUN_STARTED`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`,
   `TURN_END`, `ERROR`) with `ARTIFACT_REF` carrying `{store_id, uri, mime, size_bytes,

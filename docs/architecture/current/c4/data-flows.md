@@ -135,7 +135,7 @@ sequenceDiagram
     participant STORE as Object store
     participant BE as Client backend
 
-    Note over OBBCD, STORE: precondition, admin has configured one artifact store via BO and marked it is_default
+    Note over OBBCD, STORE: precondition, operator declared at least one ARTIFACT_STORE via env at deploy time and set ARTIFACT_STORE_DEFAULT
     User->>OBBCD: POST sessions sid artifacts multipart file
     OBBCD->>STORE: put bytes bounded by ARTIFACT_MAX_UPLOAD_MB via adapter
     STORE-->>OBBCD: uri plus size_bytes plus sha256
