@@ -1,0 +1,29 @@
+# Service-repo checkouts, provisioned by /setup-workspace -- never committed here.
+# INDEX.md (the generated workspace index) IS committed so it stays referenceable without cloning.
+workspace/*
+!workspace/.gitkeep
+!workspace/INDEX.md
+
+# Secrets
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code local settings + scratch
+.claude/settings.local.json
+.superpowers/
+
+# Local reference checkouts, not part of the template
+/repos/
+
+# Obsidian per-user vault state — not shared
+docs/architecture/**/.obsidian/
