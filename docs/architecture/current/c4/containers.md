@@ -39,11 +39,14 @@ C4Container
 
 ### flow-map-compiler {#flow-map-compiler}
 
-**Purpose.** Claude Code plugin skill that scans a client frontend repo and emits a
-structured wiki proposing an MCP tool surface for the backend the frontend talks to. Fully
-agent-driven — no scripted pipeline. Anti-goals (LOCKED): never generate MCP server code,
-runtime agent prompts, or call any registry API; never assume an MCP server exists; never
-run target-repo code.
+**Purpose.** Claude Code plugin skill that scans a client frontend repo and compiles a
+complete business-and-technical understanding of the app into a structured `.flow-map/`
+wiki. Output covers **both** the reasoning material the runtime agent needs (user journeys
+in `flows/`, business-domain specialties in `skills/`, app-wide invariants in `APP.md`,
+domain glossary) **and** the proposed backend surface (`endpoints/`) — feeding prompt
+generation and tool wiring downstream, not just tooling. Fully agent-driven — no scripted
+pipeline. Anti-goals (LOCKED): never generate MCP server code, runtime agent prompts, or
+call any registry API; never assume an MCP server exists; never run target-repo code.
 
 **Tech stack.** Markdown-based skill (no build step). Shipped from
 `bbc-discovery/flow-map-compiler/` inside the DACdigital/OpenBBC repo. Schema version `2`:

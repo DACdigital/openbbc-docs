@@ -7,8 +7,13 @@
 Trigger: a discovery author points Claude Code at a target frontend repo.
 
 1. Discovery author runs [`flow-map-compilation`](capabilities.md#l2-capabilities) inside the
-   target frontend repo → `.flow-map/` (schema v2) + zip. LOCKED anti-goal: no MCP server
-   code is generated — only a proposed endpoint inventory.
+   target frontend repo → `.flow-map/` (schema v2) + zip. The output is a complete
+   business-and-technical understanding of the app: user journeys (`flows/`), business-domain
+   specialties (`skills/`), app-wide invariants + conventions + boundaries (`APP.md`), a
+   domain glossary, **and** the proposed backend surface (`endpoints/`). It feeds both
+   prompt generation (skills + flows + glossary become the runtime agent's context) and
+   tool wiring (endpoints become `tool_backends` bindings). LOCKED anti-goal: no MCP server
+   code is generated.
 2. Admin uploads the zip via `/agents/new` → [`agent-configuration`](capabilities.md#l2-capabilities)
    captures flows, endpoints, and endpoint→backend wiring. The zip is stored inline on
    `agents.discovery_zip BYTEA` (migration 026); no persistent volume is used.

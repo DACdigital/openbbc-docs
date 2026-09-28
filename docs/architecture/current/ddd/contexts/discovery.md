@@ -2,12 +2,24 @@
 
 ## Purpose
 
-Turn a client frontend repo into a structured `.flow-map/` wiki that the wizard consumes to
-seed agent v1. Two audiences: (1) the runtime agent that will drive MCP tools wrapping the
-backend, and (2) the engineer (or downstream generator) who will build that MCP server —
-because no MCP server exists yet and someone has to specify it. Fully agent-driven; the skill
-*is* a procedure Claude Code executes. Runs on the discovery author's machine, out of
-`open-bbcd`'s DB.
+Turn a client frontend repo into a complete business-and-technical understanding of the app,
+packaged as a structured `.flow-map/` wiki that the wizard consumes to seed agent v1. This is
+the input material for **both** halves of the agent that will run downstream:
+
+- **The reasoning side** — user journeys (`flows/`), business-domain specialties
+  (`skills/`), app-wide invariants + conventions + boundaries (`APP.md`), and a domain
+  glossary — together become the `main_prompt`, `skills[]`, and `external_actions[]` in the
+  aikdm-generated bundle. Without this the agent would have no domain vocabulary or
+  procedural knowledge.
+- **The tool side** — the proposed backend surface (`endpoints/`) becomes the agent-level
+  `endpoint→backend` wiring in the configurator; at runtime `open-bbcd` dispatches tool
+  calls via `tool_backends`.
+
+Two audiences read the wiki: (1) the runtime agent (semantics, intent, sequencing,
+preconditions, invariants, failure modes, vocabulary), and (2) the engineer (or downstream
+generator) who wires the endpoints into an MCP server or the built-in
+`mcp-over-rest-bridge`. Fully agent-driven; the skill *is* a procedure Claude Code executes.
+Runs on the discovery author's machine, out of `open-bbcd`'s DB.
 
 ## Aggregates & entities
 

@@ -44,6 +44,12 @@ quarantined for human review) before /check-setup can pass.
   the Kubernetes / Helm chart path ships to production. Compose and Local Go are contributor
   tooling for iteration and the e2e Playwright suite. `nfrs.md § Availability` and
   `c4/deployment.md § Environments` both updated to say this explicitly.
+- Fully rewritten the **Discovery** L1 capability + the `flow-map-compilation` L2 entry +
+  `ddd/contexts/discovery.md § Purpose` + `c4/containers.md § flow-map-compiler` + the
+  Discovery → alpha agent value stream: earlier framing said discovery only "proposes an
+  MCP tool surface". Reality is broader — the `.flow-map/` wiki is a complete
+  business-and-technical understanding of the app (`flows/`, `skills/`, `APP.md`,
+  `glossary.md`, `endpoints/`) that feeds **both** prompt generation and tool wiring.
 - Absorbed OpenBBC PR #50 (merged 2026-09-28):
   - migration 025 — `agent_versions.status` gains `PENDING` between `INITIALIZING` and
     `READY`; wizard Finalize is now async, drained by `scripts/process_pending_alphas.sh`.

@@ -2,8 +2,15 @@
 
 ## L1 capabilities
 
-1. **Discovery** — scan a client frontend repo and propose an MCP tool surface for the
-   backend the frontend talks to.
+1. **Discovery** — turn a client frontend repo into a complete business-and-technical
+   understanding of the app: user journeys (`flows/<id>.md` — intent, sequencing,
+   preconditions, invariants, failure modes), business-domain specialties (`skills/<id>.md`
+   — the vocabulary and semantics a runtime agent needs to reason about the domain),
+   app-wide invariants + conventions + boundaries (`APP.md`), a domain glossary
+   (`glossary.md`), and the proposed backend surface each domain uses (`endpoints/<id>.md` —
+   HTTP method / path / shapes plus proposed MCP tool names). This is the input material for
+   **both** prompt generation (skills + flows + glossary become the runtime agent's context)
+   **and** tool wiring (endpoints become `tool_backends` bindings). Not just tooling.
 2. **Agent lifecycle management** — create, generate, wire, version, and deploy AI agents.
 3. **Feedback & dataset curation** — capture per-message feedback and roll it into versioned
    evaluation datasets.
@@ -21,9 +28,24 @@
 ## L2 capabilities
 
 **Under Discovery:**
-- `flow-map-compilation` — scan a frontend repo, produce `.flow-map/` at schema v2:
-  `AGENTS.md`, `APP.md`, `glossary.md`, `skills/<id>.md`, `flows/<id>.md`, plus one
-  `endpoints/<id>.md` per discovered backend call (all `proposed: true`).
+- `flow-map-compilation` — scan a frontend repo and produce `.flow-map/` at schema v2:
+  - `AGENTS.md` — entry point + retrieval indices for the wiki.
+  - `APP.md` — app-wide invariants, conventions, boundaries.
+  - `glossary.md` — domain-vocabulary pivot table (skill ↔ user phrases ↔ endpoints ↔
+    flows).
+  - `skills/<id>.md` — one per business-domain specialty; primary read for the runtime
+    agent; aggregates endpoints sharing a domain vocabulary and invariants.
+  - `flows/<id>.md` — one playbook per user journey (intent, sequencing, preconditions,
+    invariants, failure modes — no HTTP detail).
+  - `endpoints/<id>.md` — one per discovered backend call; HTTP method / path / params /
+    response shape / auth source / proposed MCP tool name; every entry `proposed: true`.
+
+  Downstream:
+  - The prompt-generation path consumes `AGENTS.md` + `APP.md` + `glossary.md` + `skills/`
+    + `flows/` to produce `main_prompt`, `skills[]`, and `external_actions[]` in the aikdm
+    bundle.
+  - The tool-wiring path consumes `endpoints/` to populate agent-level
+    `endpoint→backend` bindings.
 
 **Under Agent lifecycle management:**
 - `agent-bundle-generation` — run the two-agent generator+critic loop over a `.flow-map/` +
