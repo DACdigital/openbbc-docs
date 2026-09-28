@@ -5,27 +5,27 @@
 ```mermaid
 C4Context
     Person(user, "End user", "primary actor of the deployed agent")
-    Person(admin, "Admin / domain expert", "authors agents, curates datasets, drives evals + training")
-    Person(operator, "Operator", "runs cron + one-shot scripts against the REST API")
+    Person(admin, "Admin and domain expert", "authors agents, curates datasets, drives evals and training")
+    Person(operator, "Operator", "runs cron and one-shot scripts against the REST API")
     Person(discauth, "Discovery author", "runs the flow-map-compiler skill on target frontends")
 
-    System(sys, "OpenBBC platform", "Backoffice + REST + deployed agent runtime + aikdm")
+    System(sys, "OpenBBC platform", "Backoffice plus REST plus deployed agent runtime plus aikdm")
 
-    System_Ext(gateway, "Operator's auth gateway", "verifies caller and rewrites user_id")
+    System_Ext(gateway, "Operator auth gateway", "verifies caller and rewrites user_id")
     System_Ext(clientfe, "Client frontend", "consumes AG-UI")
-    System_Ext(clientbe, "Client backend (MCP-wrapped)", "exposes capabilities as MCP tools")
-    System_Ext(llmprov, "LLM providers", "Anthropic (default), OpenAI, Gemini via LiteLLM")
+    System_Ext(clientbe, "Client backend", "REST or MCP, exposes capabilities as tools")
+    System_Ext(llmprov, "LLM providers", "Anthropic default, OpenAI, Gemini via LiteLLM")
     System_Ext(claudecode, "Claude Code", "Runtime that executes flow-map-compiler")
 
-    Rel(admin, sys, "backoffice UI + REST", "HTTPS / htmx")
+    Rel(admin, sys, "backoffice UI plus REST", "HTTPS and htmx")
     Rel(operator, sys, "REST automation", "HTTPS")
-    Rel(user, gateway, "session cookie / bearer / mTLS", "HTTPS")
+    Rel(user, gateway, "session cookie or bearer or mTLS", "HTTPS")
     Rel(gateway, sys, "verified user_id passthrough", "HTTPS")
-    Rel(clientfe, sys, "chat", "AG-UI / SSE")
-    Rel(sys, clientbe, "tool calls", "MCP / SSE|HTTP")
+    Rel(clientfe, sys, "chat", "AG-UI over SSE")
+    Rel(sys, clientbe, "tool calls", "MCP over SSE or HTTP")
     Rel(sys, llmprov, "completions", "HTTPS")
     Rel(discauth, claudecode, "runs skill", "local")
-    Rel(claudecode, sys, "uploads .flow-map/ zip via wizard", "HTTPS")
+    Rel(claudecode, sys, "uploads flow-map zip via wizard", "HTTPS")
 ```
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Protocols, DESIGN.md § Architecture Overview, PRODUCTION.md § 2 Integrating your frontend, § 5 Auth model on 2026-09-28 -->

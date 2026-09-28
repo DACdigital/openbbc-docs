@@ -41,11 +41,11 @@ flowchart LR
     TR[training]
     DR[deployed-runtime]
 
-    DIS -- "C: .flow-map/ contract" --> AL
-    AL -- "OHS: /chat routes" --> FD
-    FD -- "P: CLOSED dataset_version" --> EV
-    AL -- "P: agent_version_id" --> EV
-    EV -- "OHS: Train gate" --> TR
-    TR -- "ACL: REST → new version" --> AL
-    AL -- "C: DEPLOYED version" --> DR
+    DIS -- "C flow-map contract" --> AL
+    AL -- "OHS chat routes" --> FD
+    FD -- "P CLOSED dataset_version" --> EV
+    AL -- "P agent_version_id" --> EV
+    EV -- "OHS Train gate" --> TR
+    TR -- "ACL REST to new version" --> AL
+    AL -- "C DEPLOYED version" --> DR
 ```
