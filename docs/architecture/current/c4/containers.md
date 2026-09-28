@@ -11,13 +11,14 @@ C4Container
     System_Ext(gateway, "Operator gateway", "external ingress")
     System_Ext(clientbe, "Client backend", "REST or MCP, two tool_backends kinds")
     System_Ext(llm, "LLM providers", "Anthropic, OpenAI, Gemini")
+    System_Ext(objstore, "Object store", "Deployer-provided artifact blob backend, S3 API")
 
     System_Boundary(sys, "OpenBBC") {
         Container(fmc, "flow-map-compiler", "Claude Code skill", "Scans a client frontend repo, emits flow-map schema v2")
-        Container(obbcd, "open-bbcd", "Go 1.22 plus", "Backoffice UI plus REST API plus deployed agent runtime plus MCP-over-REST bridge in a single binary, no local disk state")
+        Container(obbcd, "open-bbcd", "Go 1.22 plus", "Backoffice UI plus REST API plus deployed agent runtime plus MCP-over-REST bridge plus artifact-store-adapter in a single binary, no local disk state")
         Container(aikdm, "aikdm", "Python 3.12 plus uv", "Generate, evaluate, train agent bundles, DB-unaware and REST-only")
         Container(aikdmrun, "aikdm-runner", "python 3.12 plus bash, curl, tini, uv, aikdm, scripts", "Kubernetes CronJob runtime that drains PENDING alphas, evals, trainings")
-        ContainerDb(db, "postgres", "PostgreSQL 15 plus", "Owns agents plus discovery_zip BYTEA, versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions")
+        ContainerDb(db, "postgres", "PostgreSQL 15 plus", "Owns agents plus discovery_zip BYTEA, versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions, artifact_stores config plus artifact_ref content blocks embedded in message content JSONB")
     }
 
     Rel(admin, obbcd, "backoffice plus REST", "HTTPS and htmx")
@@ -25,6 +26,7 @@ C4Container
     Rel(gateway, obbcd, "AG-UI plus verified user_id", "SSE")
     Rel(obbcd, clientbe, "tool calls via http_endpoint bridge OR mcp_client proxy", "REST or MCP over SSE or HTTP")
     Rel(obbcd, db, "reads and writes", "SQL")
+    Rel(obbcd, objstore, "artifact put get delete via artifact-store-adapter", "S3 API over HTTPS")
     Rel(obbcd, aikdm, "generate, evaluate, train via compose profile", "REST plus scripts")
     Rel(aikdmrun, obbcd, "drain PENDING queues", "REST")
     Rel(aikdmrun, db, "alpha drainer only, seed_bundle.py", "SQL")
@@ -35,7 +37,7 @@ C4Container
     Rel(fmc, obbcd, "uploads flow-map zip via wizard", "HTTPS")
 ```
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Components, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added aikdm-runner container, clarified client-backend integration as REST-bridge OR MCP-proxy, added agents.discovery_zip data ownership. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Components, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added aikdm-runner container, clarified client-backend integration as REST-bridge OR MCP-proxy, added agents.discovery_zip data ownership. Updated 2026-09-28 for artifact-support — Object store external system + artifact-store-adapter inside open-bbcd; artifact refs live in message content JSONB. -->
 
 ### flow-map-compiler {#flow-map-compiler}
 
@@ -87,10 +89,14 @@ contexts: `agents` (+ `discovery_zip BYTEA` migration 026), `agent_versions` (`s
 `capabilities[]`, `tool_backends`, `agent_endpoint_backend`, `agent_version_mcp_backend`,
 `chat_sessions` + `chat_messages` + `chat_message_feedback`, `datasets` + `dataset_versions`
 + `dataset_version_sessions`, `evals` + `eval_sessions`, `training_sessions`,
-`deployed_sessions` + `deployed_messages`. **No local disk state required** — after
-migration 026 inlined the discovery zip on `agents.discovery_zip BYTEA` the process reads
-and writes only Postgres (`DISCOVERY_STORAGE_DIR` env var no longer read;
-`internal/storage/storage.go` removed).
+`deployed_sessions` + `deployed_messages`, and `artifact_stores` (kind + config +
+`is_default` flag; artifact bytes live in the external Object store — this row only holds
+configuration + a partial-unique-index-enforced default selector). **No local disk state
+required** — after migration 026 inlined the discovery zip on `agents.discovery_zip BYTEA`
+the process reads and writes only Postgres (`DISCOVERY_STORAGE_DIR` env var no longer read;
+`internal/storage/storage.go` removed). Artifact bytes never touch Postgres — they flow
+through the `artifact-store-adapter` to the deployer-provided Object store (see
+[`integrations.md`](integrations.md) and [`../ddd/contexts/artifacts.md`](../ddd/contexts/artifacts.md)).
 
 **Published API / events.**
 - REST (JSON): `/evals/*`, `/training-sessions/*`, `/datasets/*`, `/agents/*/deploy`,
@@ -105,11 +111,12 @@ and writes only Postgres (`DISCOVERY_STORAGE_DIR` env var no longer read;
 [`feedback-datasets`](../ddd/contexts/feedback-datasets.md),
 [`evaluation`](../ddd/contexts/evaluation.md) (state + UI),
 [`training`](../ddd/contexts/training.md) (state + UI),
-[`deployed-runtime`](../ddd/contexts/deployed-runtime.md).
+[`deployed-runtime`](../ddd/contexts/deployed-runtime.md),
+[`artifacts`](../ddd/contexts/artifacts.md) (store-config CRUD + adapter dispatch).
 
 **Modularity node.** ARCH_GAP (populated later by `/modularize`).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. -->
 
 ### aikdm {#aikdm}
 

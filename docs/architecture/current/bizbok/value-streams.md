@@ -94,6 +94,42 @@ Outcome: DONE training session pointing at a newly-created agent version via `ne
 
 <!-- migrated from _migration-quarantine/DESIGN.md § Phase IV, ARCHITECTURE.md § Training sessions, § Data Flow / Flow 4 on 2026-09-28 -->
 
+### Multimodal chat with artifacts
+
+Trigger: user or admin needs to exchange a file with the agent — inbound (context material,
+image the agent reasons about, document to summarise) or outbound (chart, report, generated
+image, tool-produced artefact).
+
+1. Operator has configured at least one artifact store via
+   [`artifact-store-management`](capabilities.md#l2-capabilities) and marked it `is_default`.
+2. User submits a turn carrying an inline file (multipart on the BO chat path via
+   [`chat-artifacts`](capabilities.md#l2-capabilities); AG-UI-side upload endpoint on the
+   deployed path via [`deployed-runtime-artifacts`](capabilities.md#l2-capabilities)) —
+   `open-bbcd` streams the bytes to the store through the
+   [`artifact-store-adapter`](capabilities.md#l2-capabilities) and records an `artifact_ref`
+   content block on the user-role message.
+3. The runtime tool builder ([`mcp-tool-dispatch`](capabilities.md#l2-capabilities))
+   dispatches the turn to the agent. When the agent calls an MCP tool with an artifact
+   argument, the framework materialises the ref for the tool according to the backend
+   contract (inline base64, presigned URL, or MCP `resource` reference).
+4. If the tool result carries an `ImageContent` or `EmbeddedResource` (native MCP file
+   payload), [`chat-artifacts`](capabilities.md#l2-capabilities) /
+   [`deployed-runtime-artifacts`](capabilities.md#l2-capabilities) unpack it — bytes go to
+   the artifact store; an `artifact_ref` content block lands on the `tool`-role message.
+5. Assistant response may emit its own `artifact_ref` content block; on BO chat it renders
+   inline in the transcript; on the deployed path it streams through the AG-UI wire as an
+   `artifact_ref` event (AG-UI event-type extension — see
+   [`../ddd/contexts/deployed-runtime.md`](../ddd/contexts/deployed-runtime.md)).
+6. On BO chat, dataset close-draft ([`dataset-authoring`](capabilities.md#l2-capabilities))
+   captures the artifact refs verbatim on the frozen session — eval replay resolves them
+   through the same adapter as at chat time.
+
+Outcome: the user/admin exchanges any-MIME files with the agent in either direction; bytes
+remain in the deployer's chosen artifact store; the session transcript stays deterministic
+and replayable for evals.
+
+<!-- new value stream added 2026-09-28 for artifact-support. -->
+
 ### Deployment
 
 Trigger: admin has a tested agent version they want to expose to end users.

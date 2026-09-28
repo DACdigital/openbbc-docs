@@ -68,8 +68,22 @@
   Deployment + Service + optional Ingress, optional in-cluster Postgres StatefulSet, and three
   CronJobs (alphas / evals / trainings) running the `aikdm-runner` image. Date: OpenBBC PR
   #50.
+- **Artifacts live in a pluggable artifact store; `open-bbcd` holds only refs.** Chat and
+  deployed-runtime file exchanges (any MIME, both directions, all four legs — user upload,
+  MCP tool output, agent emission, agent-to-tool argument) flow through an
+  `artifact-store-adapter` to a deployer-configured Object store. Bytes never enter
+  Postgres; `chat_messages.content` and `deployed_messages.content` JSONB carry typed
+  content blocks including `artifact_ref` pointers only. Framework parity with
+  `tool_backends`: OpenBBC ships the adapter interface + one first-class kind
+  (`s3_compatible`, covering AWS S3, MinIO, GCS-HMAC, R2, B2, any S3-API endpoint); the
+  deployer picks the actual store and provides credentials in `artifact_stores.config`.
+  Rationale: keeps `open-bbcd`'s "no local disk state" invariant intact (Postgres bloat and
+  media workloads don't mix), preserves the auth-agnostic / MCP-agnostic ship pattern
+  (deployer chooses infra), and keeps eval replay deterministic via the invariant "refs
+  stay resolvable while any locked session references them" (see
+  [`ddd/contexts/artifacts.md`](ddd/contexts/artifacts.md)). Date: 2026-09-28.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. -->
 
 ## Open questions
 

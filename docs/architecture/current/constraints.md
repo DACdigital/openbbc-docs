@@ -49,5 +49,23 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
   Every operator must front it with a gateway; direct exposure is unsafe.
 - **`deployed_sessions` cannot carry per-session header overrides today** — only chat and eval
   paths do.
+- **`ARTIFACT_MAX_UPLOAD_MB` env var caps per-artifact upload size.** No default is shipped
+  — deployers set this explicitly at install time (rationale: any single default would be
+  wrong for either text-heavy or media-heavy deployments). Enforced at the upload boundary
+  on both `POST /chat-sessions/{id}/artifacts` and
+  `POST /deployed/{agent_id}/sessions/{id}/artifacts`; retrieval is not capped so refs
+  stored under a lower prior cap remain readable.
+- **Exactly one `artifact_stores.is_default = true` at any time** — partial unique index
+  (`WHERE is_default = true`). Fresh deployments start with zero configured stores; the
+  first artifact-carrying turn is rejected until an admin picks a default via
+  `POST /artifact-stores/{id}/set-default`.
+- **Artifact bytes must not be stored in Postgres.** `chat_messages.content` and
+  `deployed_messages.content` JSONB carry only `artifact_ref` pointers (`{store_id, uri,
+  mime, size_bytes, sha256}`); blob bytes flow through the `artifact-store-adapter` to the
+  deployer's Object store. Repo-layer guards reject any attempt to inline base64 payloads
+  in a content block.
+- **Artifact-store kinds are versioned via `artifact_stores.kind` string.** First-shipped
+  kind: `s3_compatible`. Adding a new kind is a code + migration change (register the
+  adapter + declare its `config` JSONB schema) — not a runtime plug-in surface.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. -->

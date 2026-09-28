@@ -38,9 +38,11 @@ at `ghcr.io/dacdigital/openbbc/{open-bbcd,aikdm-runner}` — pick a `TAG`
   Mounts LLM keys as Secrets; reaches `open-bbcd`'s REST + the LLM providers. The
   alpha-drainer CronJob additionally mounts `DATABASE_URL`, so that pod crosses into the
   Data zone.
-- **External integration zone** — LLM providers (Anthropic / OpenAI / Gemini) and the
-  client's backend (either as an `http_endpoint` REST bridge or as an `mcp_client` MCP
-  proxy). Reached from the app zone + job zone by outbound HTTPS / SSE / Streamable HTTP.
+- **External integration zone** — LLM providers (Anthropic / OpenAI / Gemini), the client's
+  backend (either as an `http_endpoint` REST bridge or as an `mcp_client` MCP proxy), and
+  the deployer-provided **Object store** (artifact-store backend, S3 API — reached only
+  from the app zone through the `artifact-store-adapter`). Reached by outbound HTTPS / SSE
+  / Streamable HTTP.
 
 Every container in [`containers.md`](containers.md) is placed:
 
@@ -64,10 +66,13 @@ Every container in [`containers.md`](containers.md) is placed:
   `generate_alpha.sh` → `seed_bundle.py`) which is granted `DATABASE_URL` explicitly.
   Marked as a dashed trust boundary in the diagram.
 - **App ↔ External integration** — outbound tool calls to the client backend (as
-  `http_endpoint` REST bridge OR `mcp_client` MCP proxy) and outbound HTTPS to LLM providers
-  cross the boundary. Tool calls carry server-to-server credentials bound to the
-  `tool_backends` row (plus per-backend `header_overrides` in the BO chat and eval paths —
-  not on the deployed path).
+  `http_endpoint` REST bridge OR `mcp_client` MCP proxy), outbound HTTPS to LLM providers,
+  and outbound S3-API calls to the deployer-provided **Object store** for artifact
+  put/get/delete via the `artifact-store-adapter` all cross the boundary. Tool calls carry
+  server-to-server credentials bound to the `tool_backends` row (plus per-backend
+  `header_overrides` in the BO chat and eval paths — not on the deployed path). Object-store
+  credentials come from `artifact_stores.config` (same secret-handling class as
+  `tool_backends.config`).
 - **Job ↔ App** — `aikdm-runner` reaches `open-bbcd` via REST for all three drainers.
   Compose-profile `aikdm` uses the same path.
 
@@ -98,6 +103,7 @@ flowchart TB
     subgraph EXT[External integration zone]
         BE[Client backend<br/>REST or MCP]
         LLM[LLM providers<br/>Anthropic and OpenAI and Gemini]
+        OSTORE[Object store<br/>deployer provided, S3 API]
     end
 
     USER --> GW
@@ -105,6 +111,7 @@ flowchart TB
     OBBCD --> DB
     OBBCD --> BE
     OBBCD --> LLM
+    OBBCD --> OSTORE
 
     AIKDMR_A --> OBBCD
     AIKDMR_E --> OBBCD
@@ -135,5 +142,8 @@ flowchart TB
 | App ↔ Data | **Denial of service** — misbehaved migration on multi-replica boot races Postgres. | Currently mitigated by the Helm chart shipping one `open-bbcd` `Deployment` replica by default. Scaling `openbbcd.replicaCount > 1` needs the follow-up work tracked in `assumptions.md`: goose `Provider` + `SessionLocker`, or a pre-install migrations `Job` in the chart. |
 | Public ↔ App | **Denial of service** — no rate limits on the deployed runtime. | ARCH_GAP — no rate-limit / abuse-control policy sourced. Rely on gateway for now. |
 | App ↔ External integration | **Provider credential leak** — LLM provider API key exposure. | Keys must come from platform secret store in production, not `.env`. `open-bbcd` and `aikdm` read `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` from env only. |
+| App ↔ External integration | **Artifact-store credential leak / tenant crossover.** Object-store credentials in `artifact_stores.config` are shared server-to-server; a leak grants blob-store access; a mis-scoped bucket lets one deployment see another's artifacts. | Store credentials in `artifact_stores.config` are handled as secrets (same class as `tool_backends.config`). Deployers scope buckets per deployment or per tenant; the framework does not enforce cross-`artifact_stores.id` isolation beyond adapter-level bucket boundaries. |
+| App ↔ External integration | **Artifact ref leak → cross-user read.** A leaked `{store_id, uri}` pair could bypass session-scope if the read route accepted refs without session context. | `GET /artifacts/{store_id}/{uri}` requires `session_id` + `user_id` query params and returns 404 on mismatch — the ref alone is not a bearer capability. Presigned URLs (when the adapter returns them) inherit the store's TTL and are logged for audit by the deployer's log aggregator. |
+| Public ↔ App | **Denial of service via oversized artifact upload.** Attacker POSTs a very large body to the artifact upload endpoint. | `ARTIFACT_MAX_UPLOAD_MB` env var gates ingest at the upload boundary; the gateway may impose an additional body-size limit. |
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model, § 7 Provider LLM keys, § 8 Known gaps on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model, § 7 Provider LLM keys, § 8 Known gaps on 2026-09-28. Updated 2026-09-28 for artifact-support — added threats for artifact-store creds, ref-based cross-user read, oversized upload. -->
