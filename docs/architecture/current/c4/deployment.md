@@ -77,7 +77,7 @@ Every container in [`containers.md`](containers.md) is placed:
 flowchart TB
     subgraph PUBLIC[Public zone]
         USER[End user]
-        GW[Operator's gateway]
+        GW[Operator gateway]
     end
 
     subgraph APP[App zone]
@@ -91,13 +91,13 @@ flowchart TB
         AIKDM[aikdm<br/>compose profile]
     end
 
-    subgraph DATA[Data zone — trust boundary]
+    subgraph DATA[Data zone - trust boundary]
         DB[(postgres)]
     end
 
     subgraph EXT[External integration zone]
         BE[Client backend<br/>REST or MCP]
-        LLM[LLM providers<br/>Anthropic / OpenAI / Gemini]
+        LLM[LLM providers<br/>Anthropic and OpenAI and Gemini]
     end
 
     USER --> GW
@@ -111,7 +111,7 @@ flowchart TB
     AIKDMR_T --> OBBCD
     AIKDM --> OBBCD
 
-    AIKDMR_A -. seed_bundle.py .-> DB
+    AIKDMR_A -.->|seed_bundle| DB
 
     AIKDMR_A --> LLM
     AIKDMR_E --> LLM

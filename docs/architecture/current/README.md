@@ -5,8 +5,8 @@
 ```mermaid
 flowchart TB
     Client[Client frontend]
-    Admin[Admin / domain expert]
-    Backend[Client backend<br/>MCP-wrapped]
+    Admin[Admin and domain expert]
+    Backend[Client backend<br/>REST or MCP]
 
     subgraph OURS[OpenBBC platform]
         FMC[flow-map-compiler<br/>Claude Code skill]
@@ -15,12 +15,12 @@ flowchart TB
         DB[(PostgreSQL 15+)]
     end
 
-    Admin -- HTTPS / htmx --> OBBCD
-    Client -- AG-UI / SSE --> OBBCD
-    OBBCD -- MCP / SSE|HTTP --> Backend
+    Admin -- HTTPS and htmx --> OBBCD
+    Client -- AG-UI over SSE --> OBBCD
+    OBBCD -- MCP over SSE or HTTP --> Backend
     OBBCD -- SQL --> DB
     OBBCD -- REST via scripts --> AIKDM
-    FMC -- .flow-map/ zip --> OBBCD
+    FMC -- flow-map zip --> OBBCD
 ```
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, DESIGN.md § Architecture Overview on 2026-09-28 -->
