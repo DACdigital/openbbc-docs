@@ -35,10 +35,11 @@ and improvement.
 
 ## Domain events
 
-<!-- ARCH_GAP: source describes state changes but does not name explicit domain events (event bus / outbox / message topics). Handler code likely emits nothing beyond DB writes.
-     Section: Domain events
-     Fill with: the events this context intends to publish (e.g. `AgentVersionCreated`, `AgentDeployed`, `AgentDeploymentRotated`, `ToolBackendRegistered`) with payload shapes.
-     See: .claude/skills/check-setup/arch-schema.md#ddd-context-file -->
+N/A because OpenBBC does not emit domain events on any transport. State transitions in
+this context are Postgres-only — `INSERT` / `UPDATE` against `agents`, `agent_versions`,
+`agent_endpoint_backend`, `agent_version_mcp_backend`, `tool_backends` — and downstream
+consumers poll the REST surface for status changes (the alpha drainer, for instance,
+enumerates `GET /agent_versions.json?status=PENDING`).
 
 ## Invariants
 

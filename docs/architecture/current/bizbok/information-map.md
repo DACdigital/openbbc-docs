@@ -1,32 +1,42 @@
 # Information map
 
+Regulatory-tag column uses a coarse three-value scheme so deployers have a starting
+inventory for their own compliance analysis:
+
+- **`system-metadata`** — structural configuration only. Regulated data does not flow
+  through unless a deployer stores something regulated inside its opaque fields (e.g. a
+  `tool_backends.config` JSONB carrying a credential — see the separate *credentials*
+  rows).
+- **`user-content (deployer-classified)`** — carries user-supplied text and/or references
+  to it (chat turns, feedback, transcripts, training reports, discovery zips derived from
+  the client's frontend). What regime applies depends entirely on the deployer's use case;
+  the platform treats all such content as opaque bytes.
+- **`credentials`** — HTTP headers / tokens outbound to backends. Must be handled as
+  secrets by the deployer (KMS, sealed-secret, etc.).
+
 | Concept | Description | Owning capability | Regulatory tag |
 |---------|-------------|-------------------|----------------|
-| Agent | Named, versioned prompt-bundle-plus-wiring configuration. Structural on `agents`, prompts on `agent_versions`. Linked-list versioning via `agents.parent_version_id`. | `agent-configuration` / `version-management` | ARCH_GAP |
-| Agent version | One node in an agent's version linked list. Owns editable prompts + version-scoped MCP attachments. | `version-management` | ARCH_GAP |
-| Capability | Backend interface (endpoint / tool) the agent uses. Discovered from the frontend, carried through `FlowMapConfig.Capabilities`, exposed at runtime as tool calls. | `flow-map-compilation` | ARCH_GAP |
-| Tool backend | Row in `tool_backends`, kind ∈ `{http_endpoint, mcp_client}`, opaque `config` JSONB. | `mcp-backend-management` | ARCH_GAP |
-| MCP attachment | Version-scoped attachment (`agent_version_mcp_backend`) with editable `note`. | `mcp-backend-management` | ARCH_GAP |
-| Endpoint→backend wiring | Agent-scoped mapping (`agent_endpoint_backend`) from discovery endpoint id to `tool_backends` row. | `agent-configuration` | ARCH_GAP |
-| `.flow-map/` | Directory + zip: flows, capabilities, agents. Uploaded via wizard to seed agent v1. | `flow-map-compilation` | ARCH_GAP |
-| Bundle | Aikdm's YAML: `metadata`, `main_prompt`, `capabilities[]`, `skills[]`, `external_actions[]`. Section structure declared in `aikdm/schemas/prompt-v1.yaml`. | `agent-bundle-generation` | ARCH_GAP |
-| Chat session | Row in `chat_sessions`: BO test-chat session per (agent version × user). Carries `backend_header_overrides` and `locked_at`. | `backoffice-chat` | ARCH_GAP |
-| Chat message | Row in `chat_messages` — user/assistant turns in a chat session. | `backoffice-chat` | ARCH_GAP |
-| Feedback | Row in `chat_message_feedback` attached to an assistant message: `rating`, `comment`, `expected_output`, `judge_criteria` (JSONB array). | `judge-criteria-capture` | ARCH_GAP |
-| Dataset | Named collection of chat sessions; two-state lifecycle DRAFT → CLOSED. | `dataset-authoring` | ARCH_GAP |
-| Dataset version | Row in `dataset_versions`: `status ∈ {DRAFT, CLOSED}`, `version_num`, `close_note`. | `dataset-authoring` | ARCH_GAP |
-| Eval | Row in `evals`: one run of an agent version against a closed dataset version. States `PENDING → IN_PROGRESS → DONE|FAILED`. | `eval-run` | ARCH_GAP |
-| Eval session | Row in `eval_sessions` (migration 022): per-simulated-session breakdown for an eval, with full `transcript` and per-criterion `judgments` JSONB. | `eval-scoring` | ARCH_GAP |
-| Eval header override | Flat `map[string]string` on the eval row (migration 023) proxied to real MCP calls. | `header-override-management-for-evals` | ARCH_GAP |
-| Training session | Row in `training_sessions` (migration 024): one automated hill-climb loop from an eval. States `PENDING → IN_PROGRESS → DONE|FAILED`. On DONE, `new_version_id` points at a newly-created agent version. | `training-session-lifecycle` | ARCH_GAP |
-| Training report | JSONB blob on the training-session row: per-epoch teacher patches, candidate scores, promote/reject decisions, stopped reason. | `hill-climb-loop` | ARCH_GAP |
-| Deployed session | Row in `deployed_sessions`: production runtime session scoped by `user_id`. AG-UI over SSE. | `deployed-session-management` | ARCH_GAP |
-| Deployed message | Row in `deployed_messages`: user/assistant turns in a deployed session. | `deployed-session-management` | ARCH_GAP |
-| Discovery zip | The `.flow-map/` archive uploaded via the wizard; referenced by every agent version from a persistent `DISCOVERY_STORAGE_DIR` (default `/data/discovery`). | `agent-configuration` | ARCH_GAP |
+| Agent | Named, versioned prompt-bundle-plus-wiring configuration. Structural on `agents`, prompts on `agent_versions`. Linked-list versioning via `agents.parent_version_id`. | `agent-configuration` / `version-management` | system-metadata |
+| Agent version | One node in an agent's version linked list. Owns editable prompts + version-scoped MCP attachments. | `version-management` | system-metadata |
+| Capability | Backend interface (endpoint / tool) the agent uses. Discovered from the frontend, carried through `FlowMapConfig.Capabilities`, exposed at runtime as tool calls. | `flow-map-compilation` | system-metadata |
+| Tool backend | Row in `tool_backends`, kind ∈ `{http_endpoint, mcp_client}`, opaque `config` JSONB. **`config` may carry static server-to-server credentials — treat those bytes as secrets.** | `mcp-backend-management` | system-metadata (config may embed credentials) |
+| MCP attachment | Version-scoped attachment (`agent_version_mcp_backend`) with editable `note`. | `mcp-backend-management` | system-metadata |
+| Endpoint→backend wiring | Agent-scoped mapping (`agent_endpoint_backend`) from discovery endpoint id to `tool_backends` row. | `agent-configuration` | system-metadata |
+| `.flow-map/` | Directory + zip (schema v2): `AGENTS.md`, `APP.md`, `glossary.md`, `skills/`, `flows/`, `endpoints/`. Derived from a scan of the client's frontend repo. | `flow-map-compilation` | user-content (deployer-classified) |
+| Bundle | Aikdm's YAML: `metadata`, `main_prompt`, `capabilities[]`, `skills[]`, `external_actions[]`. Section structure declared in `aikdm/schemas/prompt-v1.yaml`. Prompts are LLM-generated from `.flow-map/` + domain-expert inputs, so treat as derived user content. | `agent-bundle-generation` | user-content (deployer-classified) |
+| Chat session | Row in `chat_sessions`: BO test-chat session per (agent version × user). Carries `backend_header_overrides` (credentials — see *Chat header override*) and `locked_at`. | `backoffice-chat` | user-content (deployer-classified) |
+| Chat message | Row in `chat_messages` — user/assistant turns in a chat session. Free-text prompts and completions. | `backoffice-chat` | user-content (deployer-classified) |
+| Chat header override | Per-session, per-backend HTTP header map (`chat_sessions.backend_header_overrides` — JSONB `{backend_id: {header: value}}`, migration 016) merged into outbound MCP calls. Typically carries auth tokens. | `mcp-backend-management` | credentials |
+| Feedback | Row in `chat_message_feedback` attached to an assistant message: `rating`, `comment`, `expected_output`, `judge_criteria` (JSONB array). Free-text admin content. | `judge-criteria-capture` | user-content (deployer-classified) |
+| Dataset | Named collection of chat sessions; two-state lifecycle DRAFT → CLOSED. | `dataset-authoring` | user-content (deployer-classified) |
+| Dataset version | Row in `dataset_versions`: `status ∈ {DRAFT, CLOSED}`, `version_num`, `close_note`. | `dataset-authoring` | user-content (deployer-classified) |
+| Eval | Row in `evals`: one run of an agent version against a closed dataset version. States `PENDING → IN_PROGRESS → DONE|FAILED`. | `eval-run` | user-content (deployer-classified) |
+| Eval session | Row in `eval_sessions` (migration 022): per-simulated-session breakdown for an eval, with full `transcript` and per-criterion `judgments` JSONB. | `eval-scoring` | user-content (deployer-classified) |
+| Eval header override | Flat `map[string]string` on the eval row (`evals.header_overrides`, migration 023) proxied to real MCP calls during real-run evals. | `header-override-management-for-evals` | credentials |
+| Training session | Row in `training_sessions` (migration 024): one automated hill-climb loop from an eval. States `PENDING → IN_PROGRESS → DONE|FAILED`. On DONE, `new_version_id` points at a newly-created agent version. | `training-session-lifecycle` | user-content (deployer-classified) |
+| Training report | JSONB blob on the training-session row: per-epoch teacher patches, candidate scores, promote/reject decisions, stopped reason. References eval transcripts indirectly. | `hill-climb-loop` | user-content (deployer-classified) |
+| Deployed session | Row in `deployed_sessions`: production runtime session scoped by opaque `user_id` (verified upstream by the operator's gateway). AG-UI over SSE. **No `header_overrides` on this row today** — outbound MCP calls use only the static credentials on `tool_backends.config`. | `deployed-session-management` | user-content (deployer-classified) |
+| Deployed message | Row in `deployed_messages`: user/assistant turns in a deployed session. Production traffic. | `deployed-session-management` | user-content (deployer-classified) |
+| Discovery zip | The `.flow-map/` archive uploaded via the wizard; stored inline on `agents.discovery_zip BYTEA` (migration 026 — no persistent volume). | `agent-configuration` | user-content (deployer-classified) |
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § PostgreSQL, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, DESIGN.md § Versioning, PRODUCTION.md § 1b Standalone containers on 2026-09-28 -->
-
-<!-- ARCH_GAP: no data classification / regulatory tags sourced for any information concept.
-     Section: Regulatory tag column
-     Fill with: per concept, applicable regime + classification (e.g. GDPR-PII, none, tenant-scoped).
-     See: .claude/skills/check-setup/arch-schema.md#bizbok-information-map -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § PostgreSQL, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, DESIGN.md § Versioning, PRODUCTION.md § 1b Standalone containers on 2026-09-28. Regulatory-tag column filled 2026-09-28 with a coarse three-value scheme (system-metadata / user-content deployer-classified / credentials); Discovery-zip description corrected to reflect migration 026 inlining (no more DISCOVERY_STORAGE_DIR); added a dedicated "Chat header override" row for symmetry with the existing "Eval header override" row. -->

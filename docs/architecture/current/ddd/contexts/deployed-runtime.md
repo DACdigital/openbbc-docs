@@ -18,10 +18,14 @@ sessions are scoped by an opaque, gateway-verified `user_id`. Downstream of `age
 
 ## Domain events
 
-<!-- ARCH_GAP: source does not name explicit domain events. AG-UI wire events (RUN_STARTED, TEXT_MESSAGE_START/CONTENT/END, TOOL_CALL_START/ARGS/END, TURN_END, ERROR) are transport-layer, not domain events.
-     Section: Domain events
-     Fill with: candidate events (`DeployedSessionCreated`, `DeployedSessionDeleted`, `TurnStarted`, `TurnCompleted`, `ToolCallDispatched`).
-     See: .claude/skills/check-setup/arch-schema.md#ddd-context-file -->
+N/A because OpenBBC does not emit domain events on any transport. State transitions in
+this context are Postgres-only — `INSERT` against `deployed_sessions` and
+`deployed_messages`, `DELETE` cascades on session teardown — and downstream consumers do
+not exist beyond the end user (who reads via the AG-UI SSE stream, a transport-layer
+protocol, not a domain-event bus). The AG-UI wire chunks (`RUN_STARTED`,
+`TEXT_MESSAGE_START` / `CONTENT` / `END`, `TOOL_CALL_START` / `ARGS` / `END`, `TURN_END`,
+`ERROR`) are message-framing over the response, not events another bounded context
+subscribes to.
 
 ## Invariants
 

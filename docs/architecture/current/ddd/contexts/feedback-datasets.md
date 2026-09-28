@@ -25,10 +25,13 @@ tested) and upstream of `evaluation` (which scores against a CLOSED dataset vers
 
 ## Domain events
 
-<!-- ARCH_GAP: source describes state changes (draft close, session lock, feedback insert) but does not name explicit domain events.
-     Section: Domain events
-     Fill with: candidate events (`DatasetDraftClosed`, `ChatSessionLocked`, `FeedbackCaptured`, `DatasetDraftSeeded`).
-     See: .claude/skills/check-setup/arch-schema.md#ddd-context-file -->
+N/A because OpenBBC does not emit domain events on any transport. State transitions in
+this context are Postgres-only — `INSERT` / `UPDATE` against `chat_sessions`,
+`chat_messages`, `chat_message_feedback`, `datasets`, `dataset_versions`,
+`dataset_version_sessions` — and downstream consumers read via the REST surface. Draft
+close (`POST /datasets/{id}/close-draft/confirm`) writes `status=CLOSED`, flips
+`chat_sessions.locked_at`, and seeds the next DRAFT in a single transaction; there is no
+event bus notification alongside.
 
 ## Invariants
 

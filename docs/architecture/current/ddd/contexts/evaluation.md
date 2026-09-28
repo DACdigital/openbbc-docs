@@ -21,10 +21,12 @@ downstream `training` consumes that score to gate the Train button.
 
 ## Domain events
 
-<!-- ARCH_GAP: source does not name explicit domain events.
-     Section: Domain events
-     Fill with: `EvalRequested` (PENDING insert), `EvalStarted` (IN_PROGRESS), `EvalCompleted` (DONE with score), `EvalFailed`.
-     See: .claude/skills/check-setup/arch-schema.md#ddd-context-file -->
+N/A because OpenBBC does not emit domain events on any transport. State transitions in
+this context are Postgres-only — `INSERT` / `UPDATE` against `evals` and `eval_sessions`
+— and downstream consumers poll the REST surface for status changes (the eval drainer
+enumerates `GET /evals.json?status=PENDING`; the training context reads the eval's
+`status`, `score`, `agent_version_id`, and `dataset_version_id` directly via REST when
+its Train gate opens).
 
 ## Invariants
 
