@@ -79,14 +79,15 @@
   next DRAFT from CLOSED.
 - `judge-criteria-capture` — per-message JSONB `judge_criteria` (migration 021); required for
   dataset close.
-- `chat-artifacts` — attach, receive, and emit artifacts inside a BO chat session. Four legs:
-  admin uploads a file with the user turn; MCP tool result carrying `ImageContent` /
-  `EmbeddedResource` is unpacked into an `artifact_ref` content block on a `tool`-role
-  message; assistant emits an `artifact_ref` in its content block; assistant references an
-  existing artifact when calling a tool. Artifact refs persist on `chat_messages.content`
-  JSONB; bytes live in the env-configured default artifact store (see
-  `artifact-store-adapter`). Dataset close-draft captures refs verbatim so replay stays
-  deterministic.
+- `chat-artifacts` — attach, receive, and reference artifacts inside a BO chat session.
+  Three legs: admin uploads a file with the user turn; MCP tool result carrying
+  `ImageContent` / `EmbeddedResource` is unpacked into an `artifact_ref` content block on
+  a `tool`-role message; assistant references an existing artifact when calling a tool
+  (via a `{store_id, uri}` inner-ref pointer in `tool_input`). There is **no** assistant-
+  emission leg — the LLM does not itself generate binary content; only tools return
+  artifacts back to the assistant. Artifact refs persist on `chat_messages.content` JSONB;
+  bytes live in the env-configured default artifact store (see `artifact-store-adapter`).
+  Dataset close-draft captures refs verbatim so replay stays deterministic.
 
 **Under Evaluation:**
 - `eval-run` — kick off an eval (BO Evaluate button → PENDING row → `scripts/run_eval.sh`
@@ -107,13 +108,15 @@
 - `ag-ui-turn-streaming` — POST /turn → SSE event stream.
 - `mcp-tool-dispatch` — resolve endpoint→backend at runtime and dispatch tool calls to
   `tool_backends` (via the `http_endpoint` REST bridge OR the `mcp_client` MCP proxy).
-- `deployed-runtime-artifacts` — same four-leg pattern as `chat-artifacts` on the production
+- `deployed-runtime-artifacts` — same three-leg pattern as `chat-artifacts` on the production
   path (`deployed_sessions` + `deployed_messages`). End user uploads artifacts alongside a
   user turn; MCP tool results carrying `ImageContent` / `EmbeddedResource` are unpacked into
-  `artifact_ref` content blocks; assistant-emitted artifacts are surfaced to the frontend
-  through the AG-UI wire (event-type extension; see
-  [`../ddd/contexts/deployed-runtime.md`](../ddd/contexts/deployed-runtime.md)). Access is
-  session-scoped through the same trusted-`user_id` model as messages.
+  `artifact_ref` content blocks; assistant references existing artifacts as `{store_id,
+  uri}` inner-refs when calling a tool. Tool-produced artifacts are surfaced to the
+  frontend through the AG-UI wire (event-type extension; see
+  [`../ddd/contexts/deployed-runtime.md`](../ddd/contexts/deployed-runtime.md)). There is
+  no assistant-emission leg. Access is session-scoped through the same trusted-`user_id`
+  model as messages.
 
 **Under Batch drainer operations:**
 - `alpha-drainer` — `scripts/process_pending_alphas.sh` → `generate_alpha.sh` →
