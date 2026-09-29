@@ -39,15 +39,29 @@
   `GET /evals.json?status=PENDING`, `GET /training-sessions.json?status=PENDING` — the three
   JSON list surfaces the k8s CronJobs and one-shot scripts use to enumerate PENDING work.
 - **Artifact-store adapter interface (open-bbcd internal → object store).** Uniform
-  framework-side contract, adapter-per-kind wire translation:
+  framework-side contract, adapter-per-kind wire translation. Each adapter declares its
+  delivery mode at construction; the framework calls exactly one of `Get` or `Sign` per
+  retrieval based on that declaration.
+  - `PreferredDelivery() → Bytes | SignedURL` — adapter-declared at construction and
+    cached. Drives which retrieval path the framework calls, and therefore which HTTP
+    response the retrieval REST route returns: `200` proxied bytes when `Bytes`, `302
+    Location <signed_url>` when `SignedURL`.
   - `put(bytes, mime) → {uri, size_bytes, sha256}` — routes to the env-nominated
-    `ARTIFACT_STORE_DEFAULT`
-  - `get(uri) → bytes` OR `sign(uri, ttl) → https_url` — routes to the store named by the
-    `store_id` embedded in the calling `artifact_ref`
-  - `stat(uri) → {mime, size_bytes, sha256, exists}`
+    `ARTIFACT_STORE_DEFAULT`.
+  - `get(uri) → bytes` — called when `PreferredDelivery() == Bytes`. Routes to the store
+    named by the `store_id` embedded in the calling `artifact_ref`.
+  - `sign(uri, ttl) → https_url` — called when `PreferredDelivery() == SignedURL`; the
+    framework passes `ttl = ARTIFACT_SIGNED_URL_TTL_SECONDS` (default `300s`). Routes to
+    the store named by the ref's `store_id`.
+  - `stat(uri) → {exists, mime, size_bytes, sha256}` — `exists = false` signals the blob
+    has been externally removed and drives a `410 Gone` on the retrieval route (distinct
+    from `404` for session-scope mismatch or unknown `store_id`).
   - `delete(uri)`
-  - `probe() → ok | error` — boot-time self-check per registered store; fails boot on
-    unreachable credentials for the default store
+  - `probe() → ok | error` — boot-time self-check per registered store. Boot **fails** with
+    a clear error if any of: `ARTIFACT_STORE_DEFAULT` is unset while artifact routes are
+    compiled in; the default store's `probe()` fails after bounded retries; any store group
+    is malformed (missing kind-specific vars); two stores declare the same `<ID>`; or
+    `ARTIFACT_MAX_UPLOAD_MB` is unset (required whenever artifact routes are wired).
   Kinds are versioned via the env-var `KIND` value. First-shipped kind: `s3_compatible`.
   Adapter config schema per kind is a set of `ARTIFACT_STORE_<ID>_*` env-var names declared
   alongside the kind registration in code (not a runtime plug-in surface). No REST CRUD,

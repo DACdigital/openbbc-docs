@@ -69,9 +69,11 @@
   CronJobs (alphas / evals / trainings) running the `aikdm-runner` image. Date: OpenBBC PR
   #50.
 - **Artifacts live in a pluggable artifact store; `open-bbcd` holds only refs.** Chat and
-  deployed-runtime file exchanges (any MIME, both directions, all four legs — user upload,
-  MCP tool output, agent emission, agent-to-tool argument) flow through an
-  `artifact-store-adapter` to a deployer-configured Object store. Bytes never enter
+  deployed-runtime file exchanges (any MIME, both directions, all three legs — user upload,
+  MCP tool output, agent-to-tool argument) flow through an
+  `artifact-store-adapter` to a deployer-configured Object store. **There is no
+  assistant-emission leg** — the LLM does not itself generate binary content (images, files);
+  only tools return artifacts back to the assistant. Bytes never enter
   Postgres; `chat_messages.content` and `deployed_messages.content` JSONB carry typed
   content blocks including `artifact_ref` pointers only. First shipped kind:
   `s3_compatible` (covers AWS S3, MinIO, GCS-HMAC, R2, B2, any S3-API endpoint).

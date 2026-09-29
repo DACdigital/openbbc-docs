@@ -10,9 +10,10 @@ title: artifacts
 ## Purpose
 
 Artifact-store registry hydration (from env vars at boot), adapter dispatch, and
-MCP tool-result normalisation. Handles all four legs of the artifact model: user upload,
+MCP tool-result normalisation. Handles all three legs of the artifact model: user upload,
 MCP tool output (unpacked from `ImageContent` / `EmbeddedResource` into `artifact_ref`
-blocks), agent emission, agent-to-tool argument. Writes route to the env-nominated
+blocks), agent-to-tool argument. (No assistant-emission leg: the LLM does not generate
+binary content itself; only tools return artifacts to the assistant.) Writes route to the env-nominated
 `ARTIFACT_STORE_DEFAULT`; reads route via the `store_id` embedded in each `artifact_ref`
 (so old refs keep working after the default flips across redeploys).
 

@@ -20,10 +20,13 @@ adapter (see [`../../c4/integrations.md`](../../c4/integrations.md)).
   `artifact_ref` block.
 - **Artifact reference** (value object embedded in `chat_messages.content` /
   `deployed_messages.content` JSONB) — an `artifact_ref` content block: `{type:
-  "artifact_ref", store_id, uri, mime, size_bytes, sha256}`. Not a standalone entity — has
-  no independent identity outside the message it lives on; identity of the underlying blob
-  is `(store_id, uri)`. Multiple messages may reference the same blob (e.g. tool result
-  re-referenced in an assistant follow-up).
+  "artifact_ref", store_id, uri, mime, size_bytes, sha256, filename?}`. `filename` is
+  optional display metadata used by the UI as the user-facing label; it is **never** used
+  to construct storage URIs (the `(store_id, uri)` pair alone identifies the underlying
+  blob). Not a standalone entity — has no independent identity outside the message it lives
+  on. Multiple messages may reference the same blob (e.g. tool result re-referenced in a
+  follow-up tool call via a `{store_id, uri}` inner-ref pointer inside `tool_input` /
+  `tool_result` — see § Published surface).
 
 There is **no `artifacts` table** and **no `artifact_stores` table**. Postgres holds only
 `artifact_ref` blocks embedded in message content; the store registry lives in process
@@ -83,21 +86,46 @@ bus.
   the shape is not part of the published contract. **No** REST CRUD, test-connection, or
   set-default routes exist; the registry cannot be mutated at runtime.
 - **REST (session-scoped):**
-  - `POST /chat-sessions/{id}/artifacts` and
-    `POST /deployed/{agent_id}/sessions/{sid}/artifacts?user_id=X` (multipart) — inbound
-    upload from a user turn; returns `{store_id, uri, mime, size_bytes, sha256}` for the
-    client to embed in the outgoing turn body.
-  - `GET /artifacts/{store_id}/{uri}?session_id=…&user_id=…` — proxied read (or
-    presigned-URL redirect, adapter-dependent). Enforces session-scope through the same
-    trust boundary as messages: 404 on mismatch.
+  - `POST /chat-sessions/{id}/artifacts` (BO, multipart) — inbound upload from a user turn;
+    returns `{store_id, uri, mime, size_bytes, sha256, filename?}` for the client to embed
+    in the outgoing turn body. Returns `409` when `chat_sessions.locked_at IS NOT NULL`
+    (closed dataset versions may not accept new artifacts — see
+    [`feedback-datasets.md § Invariants`](feedback-datasets.md#invariants)).
+  - `POST /deployed/{agent_id}/sessions/{sid}/artifacts?user_id=X` (deployed, multipart) —
+    same shape as above, additionally scoped by the gateway-verified `user_id`.
+  - `GET /artifacts/{store_id}/{uri}?session_id=…` (BO) and
+    `GET /artifacts/{store_id}/{uri}?session_id=…&user_id=…` (deployed) — retrieval. In BO
+    the `session_id` in the query string is authoritative because the whole BO surface
+    sits behind the operator gateway (see [`../../nfrs.md § Security`](../../nfrs.md#security));
+    the deployed variant additionally requires `user_id` to enforce the same trust
+    boundary as deployed messages. Session-scope is enforced by scanning the session's
+    `chat_messages` / `deployed_messages` for an `artifact_ref` content block matching the
+    requested `(store_id, uri)`; response is `200` proxied bytes or `302 Location <signed_url>`
+    per the adapter's declared `PreferredDelivery()` (see
+    [`../../c4/integrations.md § Contracts`](../../c4/integrations.md#contracts)). Returns
+    `404` on session-scope mismatch or unknown `store_id`; `410` when the underlying blob
+    has been externally removed (`adapter.stat().exists == false`).
 - **Emitted contract for `feedback-datasets` and `deployed-runtime`:** the `artifact_ref`
   content-block shape embedded in their `.content` JSONB. Both contexts round-trip these
   blocks verbatim; only this context calls the store adapter.
+- **Emitted contract for tool-call / tool-result payloads.** Inside the assistant's turn,
+  `tool_input` and `tool_result` blocks may embed a `{store_id, uri}` inner-ref pointer
+  when referring to an artifact that already has a full `artifact_ref` block on some
+  message in the session. The inner ref does **not** repeat `{mime, size_bytes, sha256,
+  filename}` — it's a pointer to the canonical ref. This is how the assistant references
+  an existing artifact when calling a tool (leg 4), and how a tool result carrying an
+  already-known artifact avoids duplication.
 - **Consumed contract from external object store:** artifact-store adapter interface (see
-  [`../../c4/integrations.md § Contracts`](../../c4/integrations.md#contracts)) — put, get
-  or sign, delete, stat. Adapter-config env-var schemas per kind live alongside the kind
-  registration in [`../../c4/integrations.md`](../../c4/integrations.md).
+  [`../../c4/integrations.md § Contracts`](../../c4/integrations.md#contracts)) — `PreferredDelivery`
+  (adapter-declared at construction, `Bytes | SignedURL`), `put`, `get` (called when
+  `Bytes`) or `sign` (called when `SignedURL`), `delete`, `stat` (returns `{exists, mime,
+  size_bytes, sha256}`), `probe` (boot-time self-check). Adapter-config env-var schemas
+  per kind live alongside the kind registration in
+  [`../../c4/integrations.md`](../../c4/integrations.md).
 - **Consumed contract from deploy env:** `ARTIFACT_STORE_<ID>_*` variables (one set per
   registered store) plus `ARTIFACT_STORE_DEFAULT=<ID>` (nominated write target) plus
-  `ARTIFACT_MAX_UPLOAD_MB` (per-upload cap). Parsed once at boot; failure to parse is a
-  boot-time error.
+  `ARTIFACT_MAX_UPLOAD_MB` (per-upload cap; required whenever artifact routes are wired)
+  plus `ARTIFACT_SIGNED_URL_TTL_SECONDS` (optional, default `300`; passed as `ttl` to
+  `adapter.Sign` when the adapter's `PreferredDelivery == SignedURL`). Parsed once at
+  boot; failure to parse — or a duplicate `<ID>` across store groups — is a boot-time
+  error.

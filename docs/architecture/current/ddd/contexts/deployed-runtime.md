@@ -50,9 +50,12 @@ subscribes to.
   and [`artifacts.md`](artifacts.md).
 - **AG-UI event-type extension for outbound artifact streaming.** Existing wire events
   (`RUN_STARTED`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`, `TURN_END`, `ERROR`) do not carry
-  binary/file payloads; assistant-emitted artifacts stream as a new `ARTIFACT_REF` event
-  type carrying the same content-block shape (`store_id`, `uri`, `mime`, `size_bytes`,
-  `sha256`) rather than transporting bytes over SSE. Upstream AG-UI spec is versioned
+  binary/file payloads; tool-produced artifacts (from `ImageContent` / `EmbeddedResource`
+  normalisation on the tool-result path, or referenced by an agent's tool call via a
+  `{store_id, uri}` inner-ref pointer) stream as a new `ARTIFACT_REF` event type carrying
+  the same content-block shape (`store_id`, `uri`, `mime`, `size_bytes`, `sha256`,
+  optional `filename`) rather than transporting bytes over SSE. The LLM itself never emits
+  artifacts — only tools do; there is no assistant-emission leg. Upstream AG-UI spec is versioned
   separately — see [`../../c4/integrations.md § Contracts`](../../c4/integrations.md#contracts).
 
 <!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model, ARCHITECTURE.md § Agent Runtime on 2026-09-28 -->

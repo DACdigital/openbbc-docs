@@ -76,5 +76,10 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
 - **Artifact-store kinds are versioned via the `kind` env-var value.** First-shipped kind:
   `s3_compatible`. Adding a new kind is a code change (register the adapter + declare its
   env-var schema) — not a runtime plug-in surface.
+- **`ARTIFACT_SIGNED_URL_TTL_SECONDS` (optional, default `300`) caps presigned-URL TTL.**
+  Applies only when an adapter's `PreferredDelivery()` is `SignedURL` — the framework passes
+  this value to `adapter.Sign(uri, ttl)`. Deployers may tune it; the default `300s` (five
+  minutes) balances CDN-cacheable link lifetime against replay risk. Ignored by adapters
+  whose `PreferredDelivery()` is `Bytes` (proxied read).
 
 <!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. -->

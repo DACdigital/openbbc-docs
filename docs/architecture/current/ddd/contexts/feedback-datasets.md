@@ -13,10 +13,11 @@ tested) and upstream of `evaluation` (which scores against a CLOSED dataset vers
   `{backend_id: {header: value}}`), and `locked_at` (flips on dataset close).
 - **Chat message** (entity within Chat session) — `chat_messages` row. Turns; role ∈
   `{user, assistant, tool}` (DB check constraint includes `tool` since migration 009).
-  `content` is a typed content-block list (JSONB): `text` blocks for prompt/completion text
-  and `artifact_ref` blocks pointing to a blob in a configured artifact store — see
-  [`artifacts`](artifacts.md). Historical rows may still carry the legacy opaque-text
-  shape; readers normalise on load.
+  `content` is a typed content-block list (JSONB): `text` blocks for prompt/completion
+  text and `artifact_ref` blocks pointing to a blob in a configured artifact store — see
+  [`artifacts`](artifacts.md). **No data migration ran** to convert historical rows:
+  writers always emit the new array shape after ship (no dual-write logic); readers wrap
+  legacy non-array (opaque-text) rows into a synthetic single-`text`-block list on load.
 - **Feedback** (entity attached to assistant `chat_messages`) — `chat_message_feedback` row
   (migration 019). Fields: `rating` ∈ `{up, down}`, `comment`, `expected_output`,
   `judge_criteria` (JSONB array of acceptance-criteria bullets, migration 021).
@@ -56,6 +57,10 @@ event bus notification alongside.
   any blob or `artifact_stores` row referenced by a locked session's messages (see
   [`artifacts.md § Invariants`](artifacts.md#invariants)). This is the replay-safety
   guarantee evals depend on.
+- **Locked chat sessions refuse new artifact uploads.**
+  `POST /chat-sessions/{id}/artifacts` returns `409` when `chat_sessions.locked_at IS NOT
+  NULL` — a closed dataset version's session must remain a fixed snapshot for deterministic
+  replay; accepting new bytes after close would silently mutate the eval input.
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § Feedback + datasets, DESIGN.md § Phase II on 2026-09-28 -->
 
