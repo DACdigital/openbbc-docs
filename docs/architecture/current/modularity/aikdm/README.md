@@ -13,7 +13,11 @@ Container: [aikdm](../../c4/containers.md#aikdm) · Context: [agent-lifecycle](.
 
 Python 3.12+ CLI for LLM-heavy work: `generate-agent` (two-agent generator+critic loop
 producing the aikdm bundle), `evaluate` (per-session simulator/target/tool_mock/judge
-pipeline), and `train-agent` (hill-climb loop with `patience` early-stop). Multi-provider
+pipeline), and `train-agent` (hill-climb loop with `patience` early-stop). In `evaluate`
+and `train-agent`, multi-agent versions run their real topology in-process from the
+transitive `subagents` bundles in `eval-input.yaml` (the agent tool is never mocked;
+`mock_mcp_tools` covers leaf MCP tools only); `generate-agent` does not emit agent-tool
+config. Multi-provider
 LLM via Google ADK + LiteLLM (Anthropic default, OpenAI, Gemini). Deps managed with `uv`.
 
 Out-of-process and **DB-unaware** — only talks REST to `open-bbcd` through

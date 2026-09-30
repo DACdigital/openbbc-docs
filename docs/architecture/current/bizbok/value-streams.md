@@ -132,6 +132,40 @@ and replayable for evals.
 
 <!-- new value stream added 2026-09-28 for artifact-support. -->
 
+### Multi-agent topology
+
+Trigger: admin wants a task handled by several specialised agents (e.g. a planner that
+delegates to a coordinator that fans out to workers) behind a single entrypoint agent.
+
+1. Admin builds each worker as an ordinary agent and brings it to `READY`
+   ([`agent-configuration`](capabilities.md#l2-capabilities),
+   [`version-management`](capabilities.md#l2-capabilities)). Workers need not be deployed.
+2. On the entrypoint (root) version, admin ticks **Enable agent tool** and adds sub-agent
+   bindings — pinned target version, tool-facing name, prompt note
+   ([`agent-tool-configuration`](capabilities.md#l2-capabilities)). Bindings on the
+   coordinator version do the same one level down. Saving a binding that would form a
+   cycle is refused.
+3. Admin tests the root version in [`backoffice-chat`](capabilities.md#l2-capabilities).
+   When the root LLM calls `agent(subagent=…, prompt=…)`,
+   [`sub-agent-dispatch`](capabilities.md#l2-capabilities) creates a child session, runs the
+   target version with a fresh context, and returns its final answer (+ artifacts) as the
+   tool result. Child transcripts are inspectable from the parent's tool call.
+4. Admin curates feedback on the **root** transcript and closes a dataset
+   ([`dataset-authoring`](capabilities.md#l2-capabilities)); child sessions lock with their
+   root.
+5. [`eval-scoring`](capabilities.md#l2-capabilities) replays the dataset against the real
+   topology — `eval-input.yaml` carries the pinned sub-agent bundles transitively.
+   [`hill-climb-loop`](capabilities.md#l2-capabilities) improves the root's prompts while
+   sub-agent bundles stay fixed.
+6. Admin deploys the root ([`agent-deployment`](capabilities.md#l2-capabilities)); end users
+   see one agent, with sub-agent progress surfaced on the AG-UI stream as
+   `STEP_STARTED` / `STEP_FINISHED`.
+
+Outcome: a deployed entrypoint agent that delegates to a reproducible, admin-composed
+topology of pinned agent versions.
+
+<!-- new value stream added 2026-09-30 for multiagent-tools. -->
+
 ### Deployment
 
 Trigger: admin has a tested agent version they want to expose to end users.

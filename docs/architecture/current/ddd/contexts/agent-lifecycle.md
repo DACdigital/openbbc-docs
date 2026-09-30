@@ -18,8 +18,8 @@ and improvement.
 - **Agent version** (entity within Agent aggregate) — `agent_versions` row. Owns
   `status ∈ {INITIALIZING, PENDING, DRAFT, TRAINING, READY, DEPLOYED}` (migration 025 added
   `PENDING`), editable `prompts` JSONB (`main_prompt` + skill prompts), MCP attachments
-  (`agent_version_mcp_backend`, migration 015), and deployed-flag semantics enforced at the
-  agent-chain scope.
+  (`agent_version_mcp_backend`, migration 015), the `agent_tool_enabled` flag (agent-tool
+  checkbox), and deployed-flag semantics enforced at the agent-chain scope.
 - **Tool backend** (aggregate root) — `tool_backends` row. `kind ∈ {http_endpoint, mcp_client}`,
   opaque `config` JSONB. `http_endpoint` = OpenBBC's built-in **MCP-over-REST bridge** (open-bbcd
   calls a plain REST endpoint and exposes it to the agent as an MCP tool). `mcp_client` =
@@ -30,6 +30,13 @@ and improvement.
   agent for a given endpoint id.
 - **MCP attachment** (entity within Agent-version) — `agent_version_mcp_backend` row.
   Version-keyed; carries an editable `note`.
+- **Sub-agent binding** (entity within Agent-version) — `agent_version_subagent` row on the
+  **caller** version: `caller_version_id`, pinned `target_version_id` (FK
+  `agent_versions`, may belong to any agent), tool-facing `name` (unique per caller; becomes
+  a value of the agent tool's `subagent` enum), editable `note` (prompt guidance on when /
+  how to delegate, rendered into the agent tool description). Only effective when the
+  caller's `agent_tool_enabled = true`. The bindings reachable from a root version form its
+  **agent topology**.
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § PostgreSQL, § MCP wiring, DESIGN.md § Phase I, § Versioning on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING state + 026 agents.discovery_zip BYTEA; clarified tool_backends kinds as bridge vs proxy). -->
 
@@ -37,7 +44,8 @@ and improvement.
 
 N/A because OpenBBC does not emit domain events on any transport. State transitions in
 this context are Postgres-only — `INSERT` / `UPDATE` against `agents`, `agent_versions`,
-`agent_endpoint_backend`, `agent_version_mcp_backend`, `tool_backends` — and downstream
+`agent_endpoint_backend`, `agent_version_mcp_backend`, `agent_version_subagent`,
+`tool_backends` — and downstream
 consumers poll the REST surface for status changes (the alpha drainer, for instance,
 enumerates `GET /agent_versions.json?status=PENDING`).
 
@@ -60,13 +68,26 @@ enumerates `GET /agent_versions.json?status=PENDING`).
   transition; `seed_bundle.py` (invoked from `process_pending_alphas.sh`) is the
   `PENDING → READY` transition and writes both the bundle and the status flip in the same
   Postgres transaction.
+- **Agent-tool config is version-scoped on the caller.** Different versions of the same
+  agent may enable / disable the agent tool and bind different sub-agents, because the
+  version's prompt decides how the tool is used.
+- **Sub-agent targets are pinned versions.** `target_version_id` is never re-resolved at
+  call time (no "follow DEPLOYED"); the target must be `READY` or `DEPLOYED` when the
+  binding is saved.
+- **Agent topology is a DAG.** A binding that makes the caller reachable from the target
+  (including self-binding) is refused at save (repo layer). See
+  [`../../constraints.md`](../../constraints.md).
+- **New versions inherit agent-tool config verbatim.** When training (or any other path)
+  materialises a new version from a parent, `agent_tool_enabled` and every
+  `agent_version_subagent` row are copied unchanged.
 - **Tool backend test-connection precedes save** — `POST /mcp/test` pings a backend before
   saving via `POST /mcp`.
 - **`http_endpoint` and `mcp_client` are the only backend kinds.** `http_endpoint` bridges a
   REST endpoint as MCP; `mcp_client` proxies to an existing MCP server. Any other integration
-  pattern needs a new kind + new migration.
+  pattern needs a new kind + new migration. The agent tool is **not** a `tool_backends`
+  kind — it is a built-in tool dispatched in-process against another agent version.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, DESIGN.md § Versioning, PRODUCTION.md § 2.1 Mark a version as deployed on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 status state machine). -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, DESIGN.md § Versioning, PRODUCTION.md § 2.1 Mark a version as deployed on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 status state machine). Updated 2026-09-30 for multiagent-tools — agent-tool invariants. -->
 
 ## Published surface
 
@@ -76,6 +97,8 @@ enumerates `GET /agent_versions.json?status=PENDING`).
   - `GET/POST /agents/{id}/configure/architecture/endpoints[/bulk|/{endpointID}/backend]`
   - `GET/POST /agent_versions/{id}/configure/architecture/mcp` and per-attachment
     `/toggle`, `/notes`
+  - `GET/POST /agent_versions/{id}/configure/agents` (agent-tool checkbox + sub-agent
+    binding list) and per-binding `/notes`, `/delete`
 - **Backoffice UI routes:** `/agents/ui`, `/agents/new` (wizard, schema-driven from
   `web/schemas/wizard-v1.yaml`), `/agents/{agent_id}/configure/*`,
   `/agent_versions/{version_id}/configure/*`.

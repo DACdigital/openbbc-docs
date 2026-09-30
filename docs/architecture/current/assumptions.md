@@ -18,8 +18,12 @@
 - Client frontend uses the **AG-UI protocol** for the deployed-agent chat surface. The FE
   never talks to the client backend directly — it talks to `open-bbcd`, which dispatches tool
   calls to the MCP-bridged or MCP-proxied backend.
-- **Single AI agent on day one.** Multi-agent orchestration is out of scope; multiple
-  concurrent deployments per agent chain are not supported.
+- **Single entrypoint agent; multi-agent via the agent tool.** Every BO chat session and
+  every deployed session still talks to exactly one **root** agent version. Multi-agent
+  topologies (planner → coordinator → workers, …) are composed by enabling the **agent
+  tool** on a version: the root's LLM spawns other, pinned agent versions as sub-agents
+  inside the same turn, Claude-Code-style (fresh context, prompt in, final answer out).
+  Multiple concurrent deployments per agent chain remain unsupported.
 - **`aikdm` (the Python CLI) is DB-unaware** — it talks REST to `open-bbcd` via `scripts/run_eval.sh`
   and `scripts/train_from_session.sh`. The alpha-drainer path is a scripted composition
   (`process_pending_alphas.sh` → `generate_alpha.sh` → `aikdm generate-agent` + `seed_bundle.py`)
@@ -91,6 +95,24 @@
   references them" (see [`ddd/contexts/artifacts.md`](ddd/contexts/artifacts.md)).
   Trade-off: adding or reconfiguring a store requires a redeploy — accepted because store
   changes are rare and refs remain resolvable across default flips. Date: 2026-09-28.
+- **Multi-agent = an in-process agent tool over pinned versions; no inter-agent protocol.**
+  A version with `agent_versions.agent_tool_enabled = true` gets one `agent` tool whose
+  `subagent` enum is its allow-list (`agent_version_subagent` rows: pinned
+  `target_version_id`, tool-facing `name`, prompt `note`). Calling it runs the target
+  version's full turn loop — its own prompts, its own tool wiring, its own agent tool if
+  enabled — inside `open-bbcd`, with a fresh context holding only the caller's `prompt`
+  (+ optional `artifact_ref`s). The caller gets back the sub-agent's final text + any
+  `artifact_ref`s as the tool result. Each spawn persists as a **child session** linked to
+  its parent (`parent_session_id`, `parent_tool_call_id`). Config is **version-scoped on
+  the caller** (the caller's prompt decides how the tool is used, so it varies per version
+  like MCP attachments do) and **targets are pinned versions**, not agents, so BO chat,
+  evals, and training replay the exact same topology. Guardrails: DAG-only topology
+  (cycle rejection at save), `AGENT_TOOL_MAX_DEPTH`, `AGENT_TOOL_MAX_PARALLEL`. Rationale:
+  the Claude Code sub-agent pattern is proven in practice, needs no new wire protocol, and
+  reuses the existing session / message / artifact / tool-dispatch machinery; A2A or an
+  MCP-per-agent layer would add a network hop, a second auth surface, and a protocol
+  dependency for what is an in-process call. Trade-off: upgrading a worker requires a new
+  caller version (pin bump) — accepted for reproducibility. Date: 2026-09-30.
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. -->
 
@@ -108,6 +130,16 @@
 - **Timeout-based reset of stuck IN_PROGRESS items.** If a batch script dies mid-run, evals /
   training sessions stay IN_PROGRESS forever; today the fix is manual DB update.
 - **Agent operator / multi-tenant runtime.** Roadmap mentions an operator pattern for
-  multi-agent deployments; unscoped.
+  multi-agent deployments; unscoped. (In-process multi-agent topologies are now covered
+  by the agent tool — this item is about running agents as separately-scaled workloads.)
+- **Agent-tool notes in the training patch surface.** Training copies the parent's
+  agent-tool config (`agent_tool_enabled` + `agent_version_subagent` rows, including
+  `note`) verbatim. Whether the teacher LLM may also patch `note` (it is prompt guidance)
+  is undecided.
+- **Pinned-target bump ergonomics.** Upgrading a worker means creating a new caller
+  version whose binding points at the new target. A "bump pinned targets to latest
+  READY" action (and a view of which callers pin a given version) is unscoped.
+- **Per-turn LLM budget for multi-agent turns.** Depth and parallelism are capped; total
+  token / cost spend per root turn is not. A budget knob is unscoped.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 8 Known gaps, ARCHITECTURE.md § Docker deployment future, DESIGN.md § Out of Scope on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart + GHCR publish removed from roadmap). -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 8 Known gaps, ARCHITECTURE.md § Docker deployment future, DESIGN.md § Out of Scope on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart + GHCR publish removed from roadmap). Updated 2026-09-30 for multiagent-tools — replaced single-agent scope assumption, added agent-tool locked decision and three open questions. -->
