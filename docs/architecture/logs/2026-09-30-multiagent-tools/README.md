@@ -137,12 +137,29 @@ No new service, bounded context or modularity node.
   sections (`prompt-v1.yaml` unchanged). New "Agent tool" contract entry.
 - `current/c4/deployment.md` — three new threat-model rows: sub-agent fan-out cost/DoS,
   confused deputy via sub-agent wiring, and child-session information disclosure.
+- `current/modularity/open-bbcd/README.md` (L1) — Purpose: `tools.Builder` assembles and
+  dispatches the agent tool in-process with depth / parallel caps; owned tables add
+  `agent_version_subagent`; session tables note root + child sessions. (Added by
+  amendment — see below.)
+- `current/modularity/aikdm/README.md` (L1) — Purpose: `evaluate` / `train-agent` run
+  multi-agent topologies in-process from `eval-input.yaml` `subagents`; agent tool never
+  mocked; `generate-agent` does not emit agent-tool config. (Added by amendment.)
 - + `docs/architecture/logs/2026-09-30-multiagent-tools/README.md` (this file).
 
-Not touched: the modularity tree (`modularity/open-bbcd/{agent-lifecycle,tool-runtime,
+Not touched: the L2 modularity nodes (`modularity/open-bbcd/{agent-lifecycle,tool-runtime,
 feedback-datasets,deployed-runtime,evaluation,training}`, `modularity/aikdm/{eval-scoring,
 training-loop}`). Their purpose/scope text should be refined through
-`/modularize --refine`.
+`/modularize --refine open-bbcd` and `/modularize --refine aikdm`.
+
+**Amendments during PR review** (2026-09-30, same day):
+- **Folded in a `/modularize --refine` run on root.** It edited 2 of the 3 L1 children:
+  `open-bbcd` and `aikdm` Purpose sections now match the agent-tool changes above.
+  `flow-map-compiler` is unchanged; nothing was added, renamed or removed. Rationale: the
+  `open-bbcd` L1 lists owned tables and runtime behaviour that would otherwise drift from
+  `c4/containers.md § open-bbcd`. Recorded here rather than in a separate
+  `modularize-root` log so the PR keeps exactly one paired log entry. Rejected
+  alternative: a new L1 for multi-agent orchestration — the agent tool runs inside
+  `open-bbcd` (and inside `aikdm` for evals), not as a separate deployable.
 
 **Links**:
 - (user may add related spec PRs or tracker items before merge)
