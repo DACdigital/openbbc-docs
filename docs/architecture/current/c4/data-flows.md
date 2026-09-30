@@ -158,6 +158,49 @@ sequenceDiagram
 
 <!-- new data flow added 2026-09-28 for artifact-support. GitHub-safe mermaid syntax per diagram conventions. -->
 
+## Multi-agent delegated turn
+
+```mermaid
+sequenceDiagram
+    participant User as End user or Admin
+    participant OBBCD as open bbcd root orchestrator
+    participant SUB as open bbcd sub agent run
+    participant DB as postgres
+    participant LLM as LLM provider
+    participant BE as Client backend
+
+    Note over OBBCD, DB: precondition, root version has agent_tool_enabled and pinned agent_version_subagent rows
+    User->>OBBCD: POST turn on root session
+    OBBCD->>DB: INSERT user message on root session
+    OBBCD->>LLM: completion with agent tool whose subagent enum lists binding names and notes
+    LLM-->>OBBCD: tool call agent with subagent, description, prompt, optional artifact refs
+    OBBCD-->>User: TOOL_CALL_START then STEP_STARTED named after the binding
+    par up to AGENT_TOOL_MAX_PARALLEL spawns, refused past AGENT_TOOL_MAX_DEPTH
+        OBBCD->>DB: INSERT child session with parent_session_id, parent_tool_call_id, depth, target version, root user_id
+        OBBCD->>SUB: run pinned target version with fresh context holding only prompt and artifacts
+        SUB->>LLM: completion with the target version tools
+        SUB->>BE: MCP tool call via target wiring, header_overrides inherited on BO and eval paths
+        BE-->>SUB: tool result
+        SUB-->>User: child tagged TOOL_CALL events, no sub agent text tokens
+        SUB->>DB: INSERT child messages
+        SUB-->>OBBCD: final text plus artifact refs
+    end
+    OBBCD-->>User: STEP_FINISHED then TOOL_CALL_END with the sub agent result
+    OBBCD->>LLM: continue root completion with tool result
+    LLM-->>OBBCD: final assistant reply
+    OBBCD->>DB: INSERT tool and assistant messages on root session
+    OBBCD-->>User: TEXT_MESSAGE events then TURN_END
+```
+
+A sub-agent run is the same turn loop as the root, entered in-process for a different
+(pinned) agent version and persisted as a child session. It may itself spawn sub-agents
+if its version has the agent tool enabled; depth is counted from the root. In
+`aikdm evaluate` the same shape runs inside aikdm, with pinned bundles from
+`eval-input.yaml` instead of Postgres and simulated or real MCP calls per
+`mock_mcp_tools`.
+
+<!-- new data flow added 2026-09-30 for multiagent-tools. GitHub-safe mermaid syntax per diagram conventions. -->
+
 ## Deployment
 
 ```mermaid

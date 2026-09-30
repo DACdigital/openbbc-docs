@@ -15,8 +15,14 @@
 ## Contracts
 
 - **AG-UI event stream (client frontend ↔ open-bbcd).** Event types: `RUN_STARTED`,
-  `TEXT_MESSAGE_START/CONTENT/END`, `TOOL_CALL_START/ARGS/END`, `TURN_END`, `ERROR`.
-  Upstream spec: [ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui).
+  `TEXT_MESSAGE_START/CONTENT/END`, `TOOL_CALL_START/ARGS/END`, `STEP_STARTED/FINISHED`,
+  `TURN_END`, `ERROR`. Upstream spec: [ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui).
+  **Sub-agent progress** uses the standard AG-UI step events: `STEP_STARTED` /
+  `STEP_FINISHED` bracket each sub-agent run (step name = sub-agent binding `name`), and
+  the sub-agent's own `TOOL_CALL_*` events are forwarded carrying an extra
+  `child_session_id` field. Sub-agent `TEXT_MESSAGE_*` are not forwarded; the root's
+  `TOOL_CALL_END` for the `agent` tool carries the result. SDKs that ignore steps or the
+  extra field still render a correct root-level conversation.
 - **Tool-backend wire protocol (open-bbcd ↔ client backend).** Two `tool_backends` kinds:
   - `http_endpoint` — OpenBBC's **built-in MCP-over-REST bridge**. `open-bbcd` calls the
     registered REST endpoint directly and exposes it to the agent as an MCP tool. No client
@@ -34,7 +40,16 @@
   changes bump the file.
 - **Aikdm eval input.** `eval-input.yaml` — agent version + dataset version pair, consumed by
   `aikdm evaluate` and `aikdm train-agent`. Structural shape defined by aikdm; served by
-  `open-bbcd` at `GET /evals/{id}/export.yaml`.
+  `open-bbcd` at `GET /evals/{id}/export.yaml`. For versions with the agent tool it also
+  carries an `agent_tool` block (`max_depth`, `max_parallel`, the root's bindings) and a
+  `subagents` map keyed by pinned `agent_version_id` holding each reachable version's
+  bundle, tool wiring, and own bindings — transitive, so aikdm needs no further lookups.
+  The bundle schema (`prompt-v1.yaml`) itself is unchanged.
+- **Agent tool (open-bbcd / aikdm ↔ LLM).** Built-in tool definition presented to the LLM
+  when `agent_tool_enabled`: `agent(subagent: enum<binding name>, description: string,
+  prompt: string, artifacts?: artifact_ref[])` → `{text, artifacts: artifact_ref[]}`. The
+  tool description renders each binding's `name` + `note`. Same definition in `open-bbcd`
+  and `aikdm` so evals exercise the production contract.
 - **Drainer discovery.** `GET /agent_versions.json?status=PENDING`,
   `GET /evals.json?status=PENDING`, `GET /training-sessions.json?status=PENDING` — the three
   JSON list surfaces the k8s CronJobs and one-shot scripts use to enumerate PENDING work.
@@ -74,4 +89,4 @@
   via `GET /artifacts/{store_id}/{uri}` scoped by the session's `user_id`. Upstream
   AG-UI spec: [ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § flow-map-compiler, § aikdm, § MCP wiring, § Protocols, PRODUCTION.md § 2, § 3 MCP layer, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — explicit bridge-vs-proxy contract, flow-map schema v2, drainer JSON surfaces. Updated 2026-09-28 for artifact-support — artifact-store adapter interface + AG-UI ARTIFACT_REF event extension. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § flow-map-compiler, § aikdm, § MCP wiring, § Protocols, PRODUCTION.md § 2, § 3 MCP layer, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — explicit bridge-vs-proxy contract, flow-map schema v2, drainer JSON surfaces. Updated 2026-09-28 for artifact-support — artifact-store adapter interface + AG-UI ARTIFACT_REF event extension. Updated 2026-09-30 for multiagent-tools — AG-UI step events for sub-agent progress, eval-input subagents section, agent tool contract. -->

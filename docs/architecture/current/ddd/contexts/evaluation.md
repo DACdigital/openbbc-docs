@@ -15,7 +15,8 @@ downstream `training` consumes that score to gate the Train button.
   timestamps `created_at`, `started_at`, `completed_at`.
 - **Eval session** (entity within Eval) — `eval_sessions` row (migration 022). Fields:
   `score`, `total_criteria`, `passed_criteria`, `transcript` (JSONB), `judgments` (JSONB per
-  criterion).
+  criterion). For multi-agent versions `transcript` nests each sub-agent run's transcript
+  under the root's `agent` tool call.
 
 <!-- migrated from _migration-quarantine/ARCHITECTURE.md § Evals, DESIGN.md § Phase III on 2026-09-28 -->
 
@@ -43,15 +44,21 @@ its Train gate opens).
   `chat_sessions.backend_header_overrides`) — because an eval targets one agent version + one
   dataset and a single header set is enough.
 - **Score always computed against a CLOSED dataset version** — DRAFT is not evaluable.
+- **Evals run the real topology.** `GET /evals/{id}/export.yaml` includes, transitively, the
+  bundle + tool wiring of every pinned sub-agent version reachable from the evaluated
+  version; `aikdm evaluate` runs sub-agents in-process. `mock_mcp_tools` applies to leaf
+  MCP tools at every depth; the agent tool itself is never mocked. `header_overrides`
+  apply at every depth. Judges score the root transcript only.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Evals, § Chat header overrides on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Evals, § Chat header overrides on 2026-09-28. Updated 2026-09-30 for multiagent-tools — real-topology eval invariant. -->
 
 ## Published surface
 
 - **REST:**
   - `POST /evals` (create; typically from BO Evaluate button)
   - `GET /evals`, `GET /evals/{id}`, `GET /evals.json?status=PENDING` (used by cron)
-  - `GET /evals/{id}/export.yaml` (script fetch)
+  - `GET /evals/{id}/export.yaml` (script fetch; carries a `subagents` section with the
+    transitive pinned bundles + `agent_tool` caps)
   - `POST /evals/{id}/start`, `/result`, `/fail`
 - **UI:** `/evals`, `/agent_versions/{id}/evals`, eval detail page (renders per-session
   breakdown, exposes the Train button when gate passes).

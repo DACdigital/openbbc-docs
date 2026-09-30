@@ -39,11 +39,16 @@ REST).
 - **Perfect-baseline shortcut.** If `initial_score >= 1.0`, skip the hill-climb loop entirely.
 - **DONE inserts a new agent version.** `new_version_id` points at a newly-created
   `agent_versions` row that inherits the parent's `agents.architecture` (agent-level
-  structural fields) and gets a new `prompts` JSONB.
+  structural fields) and gets a new `prompts` JSONB. Agent-tool config
+  (`agent_tool_enabled` + `agent_version_subagent` rows) is copied from the parent verbatim.
+- **Hill-climb patches the root version only.** For a multi-agent version, the teacher
+  patches the trained version's `prompts`; pinned sub-agent bundles are fixed inputs to
+  every epoch's eval (they come from the same transitive `export.yaml`). Improving a worker
+  means training the worker's own version and re-pinning.
 - **State machine:** `PENDING → IN_PROGRESS → DONE|FAILED`; `FAILED` reachable from any state
   via `POST /training-sessions/{id}/fail`.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Training sessions, DESIGN.md § Phase IV on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Training sessions, DESIGN.md § Phase IV on 2026-09-28. Updated 2026-09-30 for multiagent-tools — agent-tool config copy + root-only hill-climb. -->
 
 ## Published surface
 

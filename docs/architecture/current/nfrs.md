@@ -45,6 +45,14 @@ documented in [`bizbok/capabilities.md § Batch drainer operations`](bizbok/capa
 Deployers set p50/p95/p99 for deployed AG-UI turns, backoffice chat, MCP tool calls, and
 eval wall-clock against their own workload.
 
+**Multi-agent turns amplify latency and LLM spend.** With the agent tool, one root turn
+may run up to `AGENT_TOOL_MAX_PARALLEL` sub-agents per assistant step, nested up to
+`AGENT_TOOL_MAX_DEPTH` levels (see [`constraints.md`](constraints.md)); each sub-agent is a
+full turn loop with its own LLM calls. Worst-case fan-out is bounded by those two caps,
+not by a token budget (open question in [`assumptions.md`](assumptions.md#open-questions)).
+Eval wall-clock grows the same way because `aikdm evaluate` runs the real topology
+in-process. Deployers sizing SLOs should budget per-topology, not per-agent.
+
 ## Security
 
 `open-bbcd` ships **auth-agnostic**: no built-in authentication or authorization on any route.
@@ -78,7 +86,19 @@ not a bearer capability. When an adapter returns a presigned URL in place of pro
 bytes, the URL inherits the store's TTL and access is auditable through the deployer's
 object-store logs.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model on 2026-09-28. Updated 2026-09-28 for artifact-support — added artifact-store credentials + ref-access model. -->
+**Sub-agent trust model.** A sub-agent runs with **its own** version's tool wiring, not
+its caller's — a caller can therefore reach backends it is not itself wired to, through a
+worker that is. This is the intended encapsulation (admins compose topologies
+deliberately in the BO), and it is why bindings are admin-only configuration. What a
+sub-agent **inherits** from the root session: `user_id` (child sessions are scoped to the
+root's user; child reads 404 on mismatch like any session), the artifact read scope (refs
+may flow between parent and child in both directions), and — on BO chat and eval paths —
+`header_overrides` for any backend id the sub-agent also calls. The deployed path still
+carries no header overrides, so sub-agents there use static `tool_backends.config`
+credentials only. A sub-agent never sees the parent's transcript — only the `prompt` +
+`artifact_ref`s the caller passed.
+
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model on 2026-09-28. Updated 2026-09-28 for artifact-support — added artifact-store credentials + ref-access model. Updated 2026-09-30 for multiagent-tools — added sub-agent trust model. -->
 
 ## Compliance
 
@@ -112,6 +132,12 @@ whatever compliance envelope that backend provides.
 Not shipped. Deployer's telemetry stack attaches externally (OpenTelemetry sidecar,
 Prometheus exporter, log-based alerts of choice). The chart does not open a metrics port
 or wire tracing.
+
+### Sub-agent traces
+
+Every sub-agent run is a persisted child session (linked by `parent_session_id` +
+`parent_tool_call_id`) with its full message list, so worker behaviour is inspectable in
+the BO without a tracing stack. Eval transcripts nest sub-agent transcripts the same way.
 
 ### Health probes
 

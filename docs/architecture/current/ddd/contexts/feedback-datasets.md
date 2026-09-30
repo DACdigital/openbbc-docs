@@ -11,6 +11,11 @@ tested) and upstream of `evaluation` (which scores against a CLOSED dataset vers
 - **Chat session** (aggregate root) — `chat_sessions` row. Scoped to `(agent_version_id, user)`.
   Owns `chat_messages[]`, `backend_header_overrides` (JSONB, migration 016; per-backend layout
   `{backend_id: {header: value}}`), and `locked_at` (flips on dataset close).
+- **Child chat session** (entity within the root Chat session's tree) — a `chat_sessions`
+  row created by the agent tool for one sub-agent run: `parent_session_id`,
+  `parent_tool_call_id`, `depth` (root = 0), and the pinned target `agent_version_id`.
+  Same `chat_messages` shape as any session. Inherits the root's user, artifact scope, and
+  `backend_header_overrides` (applied to any backend id the sub-agent calls).
 - **Chat message** (entity within Chat session) — `chat_messages` row. Turns; role ∈
   `{user, assistant, tool}` (DB check constraint includes `tool` since migration 009).
   `content` is a typed content-block list (JSONB): `text` blocks for prompt/completion
@@ -52,6 +57,14 @@ event bus notification alongside.
   feedback row** (migration 021). Enforced repo-side.
 - **Feedback only attaches to assistant-role messages** — enforced at the repo layer (Postgres
   doesn't do partial FKs) via `chat_message_feedback`.
+- **Only root sessions are dataset members.** Child sessions cannot be assigned to a
+  dataset; `assign-dataset` on a child returns `409`.
+- **Locking cascades to the session tree.** Closing a DRAFT flips `locked_at` on each member
+  root session **and** all its descendant child sessions, so their `artifact_ref`s stay
+  resolvable for replay.
+- **Feedback attaches to root-session assistant messages only.** Child transcripts are
+  read-only in the BO (inspectable from the parent's tool call) — judge criteria describe
+  the topology's user-visible behaviour, not individual workers.
 - **`artifact_ref` blocks on locked sessions stay resolvable.** Closing a DRAFT flips
   `chat_sessions.locked_at`; from that point on, the `artifacts` context refuses deletion of
   any blob or `artifact_stores` row referenced by a locked session's messages (see
@@ -62,7 +75,7 @@ event bus notification alongside.
   NULL` — a closed dataset version's session must remain a fixed snapshot for deterministic
   replay; accepting new bytes after close would silently mutate the eval input.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Feedback + datasets, DESIGN.md § Phase II on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Feedback + datasets, DESIGN.md § Phase II on 2026-09-28. Updated 2026-09-30 for multiagent-tools — child-session invariants. -->
 
 ## Published surface
 
@@ -72,6 +85,7 @@ event bus notification alongside.
   - `POST /agent_versions/{v}/chat/{s}/assign-dataset`
   - `GET/POST /agent_versions/{v}/chat/{s}/headers` (header-override modal)
   - `GET /agent_versions/{id}/chat` and turn-level POSTs
+  - `GET /agent_versions/{v}/chat/{s}/children/{child_id}` (read-only child transcript)
 - **Emitted contract for `evaluation`:** CLOSED `dataset_version_id` + its
   `chat_sessions[]` with locked-at + feedback rows including `judge_criteria`.
 

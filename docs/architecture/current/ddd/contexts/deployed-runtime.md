@@ -11,6 +11,11 @@ sessions are scoped by an opaque, gateway-verified `user_id`. Downstream of `age
 - **Deployed session** (aggregate root) — `deployed_sessions` row. Scoped by `(agent_id,
   user_id)`. Fields: `id`, `agent_id`, `user_id`, `title`, timestamps. **Does not** carry
   `header_overrides` today.
+- **Child deployed session** (entity within the root Deployed session's tree) — a
+  `deployed_sessions` row created by the agent tool for one sub-agent run:
+  `parent_session_id`, `parent_tool_call_id`, `depth`, pinned target `agent_version_id`,
+  and the root's `user_id`. The target version need not be the DEPLOYED one — it is
+  whatever the root version's binding pins.
 - **Deployed message** (entity within Deployed session) — `deployed_messages` row. Turns;
   streamed over AG-UI Server-Sent Events. `content` is a typed content-block list (JSONB)
   matching `chat_messages.content`: `text` blocks + `artifact_ref` blocks. Refs point at
@@ -21,7 +26,7 @@ sessions are scoped by an opaque, gateway-verified `user_id`. Downstream of `age
 ## Domain events
 
 N/A because OpenBBC does not emit domain events on any transport. State transitions in
-this context are Postgres-only — `INSERT` against `deployed_sessions` and
+this context are Postgres-only — `INSERT` against `deployed_sessions` (root and child) and
 `deployed_messages`, `DELETE` cascades on session teardown — and downstream consumers do
 not exist beyond the end user (who reads via the AG-UI SSE stream, a transport-layer
 protocol, not a domain-event bus). The AG-UI wire chunks (`RUN_STARTED`,
@@ -41,6 +46,16 @@ subscribes to.
   removes all associated `deployed_messages`.
 - **One agent deployed per chain** (migration 011) — enforced by `agent-lifecycle`; this
   context sees only the currently-DEPLOYED version.
+- **Child sessions are invisible to the session list.** `GET /deployed/{agent_id}/sessions`
+  returns root sessions only; children are reachable through their root and 404 on
+  `user_id` mismatch like any session. `DELETE` of a root cascades its whole tree.
+- **Sub-agent progress, not sub-agent tokens, on the wire.** While a sub-agent runs, the
+  root stream emits `STEP_STARTED` / `STEP_FINISHED` (step name = binding `name`) and the
+  sub-agent's `TOOL_CALL_*` events tagged with `child_session_id`; sub-agent
+  `TEXT_MESSAGE_*` are not forwarded. The caller's `TOOL_CALL_END` for the `agent` tool
+  carries the final result.
+- **Depth and parallelism caps** (`AGENT_TOOL_MAX_DEPTH`, `AGENT_TOOL_MAX_PARALLEL`) apply
+  on the deployed path exactly as on BO chat — see [`../../constraints.md`](../../constraints.md).
 - **No per-session header overrides on outbound MCP calls today** — the deployed runtime
   uses whatever server-to-server credentials the MCP backend is registered with.
 - **Artifact refs on `deployed_messages` are session-scoped by the same `user_id` trust
@@ -58,7 +73,7 @@ subscribes to.
   artifacts — only tools do; there is no assistant-emission leg. Upstream AG-UI spec is versioned
   separately — see [`../../c4/integrations.md § Contracts`](../../c4/integrations.md#contracts).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model, ARCHITECTURE.md § Agent Runtime on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model, ARCHITECTURE.md § Agent Runtime on 2026-09-28. Updated 2026-09-30 for multiagent-tools — child sessions, STEP_* progress, caps. -->
 
 ## Published surface
 
@@ -73,7 +88,8 @@ subscribes to.
     upload; returns `{store_id, uri, mime, size_bytes, sha256}` for the caller to embed on
     the outgoing turn)
 - **Emitted contract:** AG-UI event stream (`RUN_STARTED`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`,
-  `ARTIFACT_REF`, `TURN_END`, `ERROR`) — client integrates via any AG-UI SDK that
+  `STEP_STARTED` / `STEP_FINISHED` for sub-agent progress, `ARTIFACT_REF`, `TURN_END`,
+  `ERROR`) — client integrates via any AG-UI SDK that
   understands the `ARTIFACT_REF` event-type extension; older SDKs see it as an unknown
   event and can fall back to text-only rendering.
 - **Downstream contract to external backend:** MCP tool calls over SSE / Streamable HTTP,

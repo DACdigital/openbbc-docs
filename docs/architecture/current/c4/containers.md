@@ -75,7 +75,10 @@ runtime surface.
 
 **Purpose.** Backoffice UI + REST API + deployed agent runtime, all in one Go binary. Two
 orchestrator instances (BO chat + Deployed) share a stateless `tools.Builder`
-(`internal/handler/api.go:123`).
+(`internal/handler/api.go:123`). The builder also assembles the built-in **agent tool** for
+versions with `agent_tool_enabled`; dispatching it re-enters the same orchestrator
+in-process for the pinned target version as a child session (no network hop, no
+inter-agent protocol), bounded by `AGENT_TOOL_MAX_DEPTH` / `AGENT_TOOL_MAX_PARALLEL`.
 
 **Tech stack.** Go 1.22+, `database/sql` + `lib/pq`, `html/template` + htmx (server-rendered,
 no SPA; entrypoint `internal/handler/api.go:194`), `goose` migrations embedded via
@@ -87,9 +90,11 @@ no SPA; entrypoint `internal/handler/api.go:194`), `goose` migrations embedded v
 contexts: `agents` (+ `discovery_zip BYTEA` migration 026), `agent_versions` (`status ∈
 {INITIALIZING, PENDING, DRAFT, TRAINING, READY, DEPLOYED}` per migration 025),
 `capabilities[]`, `tool_backends`, `agent_endpoint_backend`, `agent_version_mcp_backend`,
+`agent_version_subagent` (+ `agent_versions.agent_tool_enabled`),
 `chat_sessions` + `chat_messages` + `chat_message_feedback`, `datasets` + `dataset_versions`
 + `dataset_version_sessions`, `evals` + `eval_sessions`, `training_sessions`,
-`deployed_sessions` + `deployed_messages`. **No local disk state required** — after
+`deployed_sessions` + `deployed_messages` (both session tables also hold child sessions
+linked by `parent_session_id` + `parent_tool_call_id`). **No local disk state required** — after
 migration 026 inlined the discovery zip on `agents.discovery_zip BYTEA` the process reads
 and writes only Postgres (`DISCOVERY_STORAGE_DIR` env var no longer read;
 `internal/storage/storage.go` removed). Artifact bytes never touch Postgres — they flow
@@ -117,7 +122,7 @@ blocks embedded in message-content JSONB, never store configuration or credentia
 
 **Modularity node.** ARCH_GAP (populated later by `/modularize`).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. Updated 2026-09-30 for multiagent-tools — in-process agent tool, agent_version_subagent, child sessions. -->
 
 ### aikdm {#aikdm}
 
@@ -142,6 +147,10 @@ mounted at `/work`). Non-zero exit produces structured JSON on stderr
 **Published API / events.** CLI subcommands `generate-agent`, `evaluate`, `train-agent`
 (`aikdm/aikdm/cli.py`); consumed via `scripts/*.sh` wrappers from `open-bbcd` and by
 operators directly. Bundle format declared in `aikdm/schemas/prompt-v1.yaml` (versioned).
+`evaluate` and `train-agent` run multi-agent topologies in-process: the target loop
+exposes the same `agent` tool and runs pinned sub-agent bundles from the `subagents`
+section of `eval-input.yaml`, under the same depth / parallel caps as `open-bbcd`.
+`generate-agent` does not generate agent-tool config.
 
 **DDD contexts.** [`agent-lifecycle`](../ddd/contexts/agent-lifecycle.md) (generation),
 [`evaluation`](../ddd/contexts/evaluation.md) (scoring pipeline),

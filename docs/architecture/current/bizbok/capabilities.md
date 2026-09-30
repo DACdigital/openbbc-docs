@@ -11,7 +11,8 @@
    HTTP method / path / shapes plus proposed MCP tool names). This is the input material for
    **both** prompt generation (skills + flows + glossary become the runtime agent's context)
    **and** tool wiring (endpoints become `tool_backends` bindings). Not just tooling.
-2. **Agent lifecycle management** — create, generate, wire, version, and deploy AI agents.
+2. **Agent lifecycle management** — create, generate, wire, version, and deploy AI agents,
+   and compose them into multi-agent topologies through the per-version agent tool.
 3. **Feedback & dataset curation** — capture per-message feedback and roll it into versioned
    evaluation datasets.
 4. **Evaluation** — score an agent version against a closed dataset version.
@@ -71,6 +72,11 @@
   editable per version; status state machine `INITIALIZING → PENDING → READY →
   TRAINING → READY → DEPLOYED` (migration 025).
 - `agent-deployment` — mark a version DEPLOYED (DB-enforced singleton per agent chain).
+- `agent-tool-configuration` — per-version checkbox enabling the agent tool
+  (`agent_versions.agent_tool_enabled`) plus the allow-list of sub-agent bindings
+  (`agent_version_subagent`: pinned target version, tool-facing name, prompt note).
+  Bind-time checks: target is `READY` or `DEPLOYED`, and the binding keeps the topology a
+  DAG. Lets admins build planner → coordinator → worker topologies from ordinary agents.
 
 **Under Feedback & dataset curation:**
 - `backoffice-chat` — test any version in the BO chat (`/agent_versions/{id}/chat`), capture
@@ -93,7 +99,10 @@
 - `eval-run` — kick off an eval (BO Evaluate button → PENDING row → `scripts/run_eval.sh`
   one-shot, or the k8s eval `CronJob` drainer).
 - `eval-scoring` — per-session simulator/target/tool_mock/judge pipeline; global pass-rate
-  scoring.
+  scoring. For a version with the agent tool, the target step runs the real topology
+  in-process from the transitive sub-agent bundles in `eval-input.yaml`
+  (`mock_mcp_tools` applies to leaf MCP tools only; the agent tool itself is never
+  mocked).
 - `header-override-management-for-evals` — flat `header_overrides` map on the eval row
   (migration 023) proxied to real MCP calls.
 
@@ -117,6 +126,15 @@
   [`../ddd/contexts/deployed-runtime.md`](../ddd/contexts/deployed-runtime.md)). There is
   no assistant-emission leg. Access is session-scoped through the same trusted-`user_id`
   model as messages.
+
+- `sub-agent-dispatch` — runtime side of the agent tool, shared by BO chat and the deployed
+  runtime (same `tools.Builder` path as `mcp-tool-dispatch`): create a child session, run
+  the pinned target version's turn loop with a fresh context, return final text +
+  `artifact_ref`s as the tool result. Enforces `AGENT_TOOL_MAX_DEPTH` and
+  `AGENT_TOOL_MAX_PARALLEL`; propagates `user_id`, artifact scope, and (BO / eval)
+  `header_overrides`; forwards sub-agent progress to the AG-UI stream as
+  `STEP_STARTED` / `STEP_FINISHED` + child-tagged `TOOL_CALL_*` (sub-agent text tokens are
+  not streamed).
 
 **Under Batch drainer operations:**
 - `alpha-drainer` — `scripts/process_pending_alphas.sh` → `generate_alpha.sh` →
@@ -142,7 +160,7 @@
   default. Uploads are bounded by `ARTIFACT_MAX_UPLOAD_MB` (see
   [`../constraints.md`](../constraints.md)).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, DESIGN.md § Flow, § Resources on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING state, 026 discovery_zip inline, alpha drainer + eval/training drainers as k8s CronJobs, mcp-over-rest-bridge L2 capability, flow-map schema v2). Updated 2026-09-28 for artifact-support — added chat-artifacts, deployed-runtime-artifacts, artifact-store-management, artifact-store-adapter. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, DESIGN.md § Flow, § Resources on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING state, 026 discovery_zip inline, alpha drainer + eval/training drainers as k8s CronJobs, mcp-over-rest-bridge L2 capability, flow-map schema v2). Updated 2026-09-28 for artifact-support — added chat-artifacts, deployed-runtime-artifacts, artifact-store-management, artifact-store-adapter. Updated 2026-09-30 for multiagent-tools — added agent-tool-configuration, sub-agent-dispatch; eval-scoring runs real topologies. -->
 
 ## Capability → context/container map
 
@@ -172,5 +190,7 @@
 | `chat-artifacts` | [feedback-datasets](../ddd/contexts/feedback-datasets.md), [artifacts](../ddd/contexts/artifacts.md) | [open-bbcd](../c4/containers.md#open-bbcd) |
 | `deployed-runtime-artifacts` | [deployed-runtime](../ddd/contexts/deployed-runtime.md), [artifacts](../ddd/contexts/artifacts.md) | [open-bbcd](../c4/containers.md#open-bbcd) |
 | `artifact-store-adapter` | [artifacts](../ddd/contexts/artifacts.md) | [open-bbcd](../c4/containers.md#open-bbcd) |
+| `agent-tool-configuration` | [agent-lifecycle](../ddd/contexts/agent-lifecycle.md) | [open-bbcd](../c4/containers.md#open-bbcd) |
+| `sub-agent-dispatch` | [deployed-runtime](../ddd/contexts/deployed-runtime.md), [feedback-datasets](../ddd/contexts/feedback-datasets.md) | [open-bbcd](../c4/containers.md#open-bbcd), [aikdm](../c4/containers.md#aikdm) |
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Components, § MCP wiring, DESIGN.md § Flow on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (new drainers + mcp-over-rest-bridge rows). Updated 2026-09-28 for artifact-support — four new rows across artifacts + feedback-datasets + deployed-runtime. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Components, § MCP wiring, DESIGN.md § Flow on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (new drainers + mcp-over-rest-bridge rows). Updated 2026-09-28 for artifact-support — four new rows across artifacts + feedback-datasets + deployed-runtime. Updated 2026-09-30 for multiagent-tools — agent-tool-configuration + sub-agent-dispatch rows. -->
