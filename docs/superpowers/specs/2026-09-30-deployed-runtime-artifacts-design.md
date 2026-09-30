@@ -9,6 +9,8 @@
 
 `chat-artifacts` shipped file exchange for the backoffice test chat only. The deployed runtime — the surface end users actually hit — has none of it: the deployed turn drops every non-text input block, the deployed orchestrator is not wired to the artifact registry (so MCP tool results carrying images/resources are never normalised and uploaded refs would never be rendered), there is no deployed upload or retrieval route, and the `ARTIFACT_REF` stream event promised by the arch does not exist on any surface. A downstream project needs end users to bring documents and screenshots into a conversation and to receive files produced by tools.
 
+BO itself is only half-working: the shared message codec (`blocksToJSON` / `parseBlocks` in `internal/chat/orchestrator.go`) has no `artifact_ref` case, so refs reach the LLM for the one turn they arrive in and are then dropped from persisted history. Nothing is ever retrievable afterwards and artifacts do not carry into later turns. This spec fixes that for both surfaces.
+
 This spec also changes **how** artifacts enter a conversation. OpenBBC is not a file store: uploading is the user's signal "the next message is about this file". So user-supplied artifacts are **session-bound and staged** — the server records each one as a *pending artifact* on the session and adds every pending artifact to the session's next turn automatically. The client never sends `artifact_ref` blocks. This closes two holes that the BO design leaves open and that matter once untrusted end users are the callers:
 
 - **Cross-session ref borrowing** — a client embedding another session's `{store_id, uri}` into its own turn, which would make the session-scope read check pass for a blob it never uploaded.
@@ -36,14 +38,14 @@ Success is judged by: an end user of a deployed agent can upload a PDF or image,
 - **Staged, session-bound artifacts on both surfaces.** Uploading records a pending artifact on the session; the next turn claims all pending artifacts atomically with persisting the user message and appends them as `artifact_ref` blocks.
 - **Deployed routes:** upload, pending-artifact list/remove, and session-scoped retrieval, nested under the deployed session and enforcing the same `(agent_id deployed, session_id, user_id)` checks as `turn`.
 - **BO routes:** same paths as shipped in PR #53; upload gains the pending-row write and additive response fields (`id`, `status`), retrieval switches from a JSONB message scan to a table lookup.
-- **Turn contract change on both surfaces:** client-sent `artifact_ref` input blocks are ignored; a turn is valid with non-empty text **or** at least one pending artifact.
-- **BO backfill** of `chat_session_artifacts` from refs already embedded in `chat_messages` (migration `027`).
+- **Turn contract change on both surfaces:** client-sent `artifact_ref` input blocks are ignored; a turn is valid with non-empty text **or** at least one pending artifact; an empty turn is refused with `400` (new — today empty turns are not rejected).
+- **Persist and rehydrate `artifact_ref` blocks** in the shared message codec, for user- and tool-role messages on both surfaces. Provider-rendered media (`InlineMediaBlock`) is never persisted.
 - **Pending-artifact queue endpoints on both surfaces:** list the session's pending artifacts and remove one before the next turn. BO chat view also renders pending chips server-side.
 - **Tool-result artifacts recorded:** refs produced by MCP tool-result normalisation get a row (`origin = 'tool_result'`), so the table is the single read allow-list.
 - **`ARTIFACT_REF` stream event** on both surfaces and both transports (AG-UI as a `CUSTOM` event; JSONL as `artifact_ref`).
 - **Deployed orchestrator wiring** to the artifact registry (renderer + tool-result uploader), parity with BO.
 - **`ARTIFACT_MAX_PENDING`** env var (default `10`) capping pending artifacts per session.
-- **Minimal BO UI:** attach button on the chat form, pending chips, filename links for `artifact_ref` blocks in the transcript and for live `ARTIFACT_REF` events.
+- **Minimal BO UI:** add-file button on the chat form, pending chips, filename links for `artifact_ref` blocks in the transcript and for live `ARTIFACT_REF` events.
 - **Deploy config:** Helm chart `artifacts:` values block (store groups, credentials from an existing Secret, caps); `docker-compose.yml` MinIO profile.
 
 ### Out of scope
@@ -54,6 +56,9 @@ Success is judged by: an end user of a deployed agent can upload a PDF or image,
 - **Blob GC / lifecycle** — unchanged from `chat-artifacts` (deployer uses native store lifecycle rules). Session delete cascades rows, not blobs.
 - **Per-session header overrides on outbound MCP calls** from the deployed runtime (existing open question, unrelated).
 - **BO UI polish** — thumbnails, previews, drag-and-drop.
+- **Passing artifacts across the agent-tool boundary**, in either direction, and any artifact-scope inheritance between a root session and its child sessions. See Contracts § Sub-agents. This narrows the merged `multiagent-tools` architecture (which lets refs flow both ways) and is listed as an arch delta.
+- **Framework resolution of inner-ref pointers** (`{store_id, uri}` inside `tool_use` input). The framework never dereferences, renders or authorises them; they reach the tool as opaque JSON.
+- **Backfill of PR #53 data.** None is needed: PR #53 never persisted `artifact_ref` blocks (see Business value), so no `chat_messages` row holds a ref. Blobs uploaded under PR #53 remain in the store unreferenced.
 
 ## Contracts
 
@@ -79,18 +84,18 @@ Columns (both tables):
 | `size_bytes` | `bigint NOT NULL` | server-measured |
 | `sha256` | `text NOT NULL` | server-computed |
 | `filename` | `text NULL` | display label only; never used to build a storage URI. May contain user-provided PII — see Risks |
-| `consumed_by_message_id` | `uuid NULL` | `NULL` = pending; otherwise the message the ref was added to |
+| `message_id` | `uuid NULL` | `NULL` = pending (origin `upload` only); otherwise the message carrying the ref — the claiming user message, or the tool-role message for `tool_result` rows |
 | `created_at`, `updated_at` | `timestamptz NOT NULL DEFAULT now()` | |
 
 Constraints / indexes:
 
-- `UNIQUE (session_id, store_id, uri) WHERE origin = 'upload' AND consumed_by_message_id IS NULL` — at most one pending row per blob per session; an identical upload while pending returns the existing row. A consumed row and a new pending row for the same blob may coexist (re-uploading is a new intent to discuss the file). Tool-result rows are unconstrained — the same tool may return the same image twice; each is a separate record.
-- `INDEX (session_id) WHERE consumed_by_message_id IS NULL` — claim path.
+- `UNIQUE (session_id, store_id, uri) WHERE origin = 'upload' AND message_id IS NULL` — at most one pending row per blob per session; an identical upload while pending returns the existing row. A consumed row and a new pending row for the same blob may coexist (re-uploading is a new intent to discuss the file). Tool-result rows are unconstrained — the same tool may return the same image twice; each is a separate record.
+- `INDEX (session_id) WHERE message_id IS NULL` — claim path.
 - `INDEX (session_id, store_id, uri)` — retrieval allow-list lookup.
 
-`consumed_by_message_id` is deliberately not an FK: messages and artifact rows are written in the same transaction on the claim path, and the tool-result path records rows after the tool message is appended; a plain column avoids ordering coupling. Both are removed together by the session cascade.
+`message_id` is deliberately not an FK: it references `chat_messages` or `deployed_messages` depending on the table, and both are removed together by the session cascade. On both write paths the message and its rows are written in one transaction (§ Store-layer writes).
 
-Both migrations are additive (new tables only); the previous app version ignores them, so rollout and rollback are safe.
+Both migrations are additive (new tables only, no data backfill); the previous app version ignores them, so rollout and rollback are safe. Down migrations drop the tables. The numbers `027`/`028` are the next free ones today; if `multiagent-feature` migrations land first, these take the next free numbers at implementation.
 
 ### MIME resolution (both origins)
 
@@ -106,11 +111,19 @@ The server has the bytes in hand on both write paths (multipart upload and MCP t
 
 Nothing is rejected by this step — resolution only decides the stored label. `size_bytes` and `sha256` are always measured over the received bytes.
 
-**BO backfill (in `027`).** Refs written to `chat_messages` under PR #53 have no row, so they would become unreadable. `027` inserts one `chat_session_artifacts` row per `artifact_ref` block found in existing `chat_messages.content` arrays: `origin = 'upload'` for user-role messages, `'tool_result'` for tool-role, `consumed_by_message_id` = the message id, `created_at` = the message's `created_at`. Non-array (legacy text) content is skipped. `deployed_messages` needs no backfill — the deployed turn never accepted refs.
-
 ### Data — message content
 
-Unchanged shape from `chat-artifacts`: `chat_messages.content` / `deployed_messages.content` hold typed block arrays with `text` and `artifact_ref` blocks (`{type, store_id, uri, mime, size_bytes, sha256, filename?}`). What changes is provenance: every `artifact_ref` on a user-role message is now built server-side from a claimed row, never from client input.
+Shape as declared by `chat-artifacts`: `chat_messages.content` / `deployed_messages.content` hold typed block arrays with `text`, `tool_use`, `tool_result` and `artifact_ref` blocks. `artifact_ref` = `{type, store_id, uri, mime, size_bytes, sha256, filename?}`.
+
+**Codec change (new).** `blocksToJSON` gains an `llm.ArtifactRefBlock` case writing exactly that shape; `parseBlocks` gains the matching `artifact_ref` case. `llm.InlineMediaBlock` (bytes produced by a renderer for one LLM request) is never persisted: `blocksToJSON` returns an error if it meets one, so a code path that tries to persist rendered bytes fails loudly in tests rather than writing bytes to Postgres.
+
+**Provenance.** Every `artifact_ref` on a user-role message is built server-side from a claimed row; every `artifact_ref` on a tool-role message comes from MCP tool-result normalisation. Neither is ever taken from client input or from LLM output.
+
+### REST conventions
+
+New routes follow the daemon's existing route conventions rather than `docs/conventions/api.md`: no `/v1` prefix, nesting under the owning session, plain-text error bodies via the existing `Error`/`http.Error` helpers, no `Idempotency-Key`. Upload is naturally idempotent while a row is pending (content-hash dedup); `DELETE` is idempotent in effect (a repeat returns `404`). Aligning the daemon with `api.md` is a separate, daemon-wide change.
+
+**Two collections, one concept.** `…/artifacts` addresses blobs by `(store_id, uri)` (upload, retrieval). `…/pending-artifacts` addresses queue entries by row `id` (list, remove). The `id` returned by upload is only addressable under `…/pending-artifacts/{id}`; there is no `DELETE …/artifacts/{id}`.
 
 ### REST — deployed (new)
 
@@ -135,7 +148,15 @@ All deployed artifact routes run the `turn` preamble: `requireDeployed(agent_id)
 
 This is the **pending-artifact object**, used by every route below that returns a pending artifact. `store_id` + `uri` let the client build the retrieval URL for a pending artifact (e.g. to preview it before sending). They are informational only: the turn never reads refs from the client.
 
-`status` is always `"pending"` in this response (a re-upload of content already pending returns the existing row; a re-upload of content already consumed in this session creates a new pending row).
+`status` is always `"pending"` in this response. Upload handling, in order, inside one transaction that first locks the session row (`SELECT … FOR UPDATE`) so concurrent uploads on one session serialise:
+
+1. Hash and buffer the body (`413` past `ARTIFACT_MAX_UPLOAD_MB`, before any store call); resolve `mime` (§ MIME resolution).
+2. **Dedup:** if a pending row for `(session_id, store_id, uri)` exists, return it (`201`, unchanged — its original `filename` and `mime` are kept even if this request's differ). The pending cap does not apply to a dedup hit.
+3. **Cap:** if the session already has `ARTIFACT_MAX_PENDING` pending rows → `409`.
+4. **Store:** `adapter.Stat(uri)`; if it reports the blob exists, skip `Put`. If `Stat` errors, log and fall through to `Put` (current PR #53 behaviour, kept). `Put` failure → `502`.
+5. Insert the pending row and return it.
+
+A re-upload of content already consumed in this session creates a new pending row.
 
 | Status | Cause |
 |---|---|
@@ -143,17 +164,17 @@ This is the **pending-artifact object**, used by every route below that returns 
 | `404` | Agent not deployed, session missing, user mismatch, or agent mismatch |
 | `409` | Session already has `ARTIFACT_MAX_PENDING` pending artifacts |
 | `413` | Upload exceeds `ARTIFACT_MAX_UPLOAD_MB` (before any store call) |
-| `502` | `adapter.Stat` / `adapter.Put` failed |
+| `502` | `adapter.Put` failed |
 
 **`GET /deployed/{agent_id}/sessions/{session_id}/artifacts/{store_id}/{uri...}?user_id=X`** — retrieval. `{uri...}` is a Go 1.22 wildcard so `sha256/<hex>` passes intact.
 
-Authorisation: preamble + a row exists in `deployed_session_artifacts` for `(session_id, store_id, uri)` (any origin, pending or consumed) + `store_id` is registered. Delivery per adapter `PreferredDelivery()`: `302 Location: <signed-url>` (TTL `ARTIFACT_SIGNED_URL_TTL_SECONDS`) or `200` with streamed body. Response headers — see § Retrieval response headers.
+Authorisation: preamble + a row exists in `deployed_session_artifacts` for `(session_id, store_id, uri)` (any origin, pending or consumed) + `store_id` is registered. Then `adapter.Stat(uri)`: not found → `410`. (`Sign` presigns offline and cannot detect a missing blob, so the `Stat` is required for `410` to be reachable.) Delivery per adapter `PreferredDelivery()`: `302 Location: <signed-url>` (TTL `ARTIFACT_SIGNED_URL_TTL_SECONDS`) or `200` with streamed body. Response headers — see § Retrieval response headers.
 
 | Status | Cause |
 |---|---|
 | `400` | Missing `user_id`, or path not `<store_id>/<uri>` |
 | `404` | Preamble failure, no matching row, or `store_id` not registered |
-| `410` | Blob externally removed (`ErrBlobMissing`) |
+| `410` | `Stat` reports the blob missing (externally removed) |
 | `502` | Other adapter error |
 
 **Retrieval response headers (both surfaces).** Artifact bytes are user- or tool-supplied and served from an origin the client may render, so:
@@ -163,7 +184,7 @@ Authorisation: preamble + a row exists in `deployed_session_artifacts` for `(ses
 
 **`GET /deployed/{agent_id}/sessions/{session_id}/pending-artifacts?user_id=X`** — list the session's queue.
 
-`200` with `{ "pending_artifacts": [ <pending-artifact object>, … ] }`, ordered by `created_at` (the order they will be added to the next turn). `[]` when empty. Preamble failure → `404`; missing `user_id` → `400`.
+`200` with `{ "pending_artifacts": [ <pending-artifact object>, … ] }`, ordered by `(created_at, id)` (the order they will be added to the next turn). `[]` when empty. Preamble failure → `404`; missing `user_id` → `400`.
 
 **`DELETE /deployed/{agent_id}/sessions/{session_id}/pending-artifacts/{id}?user_id=X`** — remove one pending artifact so the next turn does not include it.
 
@@ -180,55 +201,81 @@ The existing `GET /deployed/{agent_id}/sessions/{session_id}?user_id=X` response
 
 ### REST — BO (existing paths, changed behaviour)
 
-- **`POST /agent_versions/{version_id}/chat/{session_id}/artifacts`** — same preamble as today (`GetSession(session_id, version_id)`, `409` if `locked_at IS NOT NULL`). Now writes a pending `chat_session_artifacts` row and returns the pending-artifact object. This is additive over PR #53's `{store_id, uri, mime, size_bytes, sha256, filename}` — every existing field is kept with the same meaning; `id` and `status` are new. Adds the `409` pending-cap case. Other statuses unchanged.
-- **`GET /agent_versions/{version_id}/chat/{session_id}/artifacts/{store_id}/{uri...}`** — authorisation switches from the `chat_messages` JSONB scan (`SessionReferences`) to a row lookup in `chat_session_artifacts`. Response headers per § Retrieval response headers (adds `Content-Length`, `nosniff`, `Content-Disposition`). Statuses unchanged.
+- **`POST /agent_versions/{version_id}/chat/{session_id}/artifacts`** — same preamble as today (`GetSession(session_id, version_id)`, `409` if `locked_at IS NOT NULL`). Now writes a pending `chat_session_artifacts` row and returns the pending-artifact object. This is additive over PR #53's `{store_id, uri, mime, size_bytes, sha256, filename}` — every existing field is kept with the same meaning; `id` and `status` are new. Adds the `409` pending-cap case and follows the same upload handling steps as deployed. Other statuses unchanged.
+- **`GET /agent_versions/{version_id}/chat/{session_id}/artifacts/{store_id}/{uri...}`** — authorisation switches from the `chat_messages` JSONB scan (`SessionReferences`, which could never match because refs were not persisted) to a row lookup in `chat_session_artifacts`, followed by the same `Stat`-before-delivery step as deployed. Response headers per § Retrieval response headers (adds `Content-Length`, `nosniff`, `Content-Disposition`). Statuses unchanged.
 - **`GET /agent_versions/{version_id}/chat/{session_id}/pending-artifacts`** and **`DELETE /agent_versions/{version_id}/chat/{session_id}/pending-artifacts/{id}`** — same contract as the deployed pair, with the BO preamble (`GetSession(session_id, version_id)`). `DELETE` on a session with `locked_at IS NOT NULL` → `409`, matching upload.
 - **Chat view** (`GET /agent_versions/{v}/chat/{s}`) renders pending rows as chips, each with a remove control calling the `DELETE` route.
 
 ### REST — turn (both surfaces)
 
 - `POST /deployed/{agent_id}/sessions/{session_id}/turn` and `POST /agent_versions/{v}/chat/{s}/turn`: input blocks of type `artifact_ref` are **ignored** (not rejected — older clients that still send them keep working; the blocks are simply dropped). Only `text` blocks are read from the body.
-- Validity: a turn with no non-empty `text` block and no pending artifacts is rejected exactly as an empty turn is today. A turn with no text but ≥1 pending artifact is accepted.
-- The claimed refs appear on the persisted user message after its text blocks, in `created_at` order.
+- **Validity (new rule — neither handler rejects empty input today).** After the existing session checks and before the SSE stream opens, the handler checks: no non-empty `text` block **and** no pending artifact for the session → `400` with the plain-text body `empty turn: no text and no pending artifacts` (error code `empty_turn`). A turn with no text but ≥1 pending artifact is accepted.
+- **Race with `DELETE`.** A pending artifact removed between that check and the claim can leave a text-less turn with nothing to claim. `AppendUserTurn` then returns `ErrEmptyTurn` and rolls back (no message persisted); the orchestrator emits an in-band `RUN_ERROR` with code `empty_turn` and ends the stream.
+- The claimed refs appear on the persisted user message after its text blocks, in `(created_at, id)` order.
 
-### Claim semantics (store layer)
+### Store-layer writes
 
 Both session stores gain:
 
 ```go
 // AppendUserTurn persists the user message and claims every pending artifact on
 // the session in one transaction. Claimed refs are appended to msg.Content after
-// its existing blocks, in created_at order, and returned for the caller.
+// its existing blocks, in (created_at, id) order, and returned for the caller.
+// Returns ErrEmptyTurn (and persists nothing) if msg has no non-empty text block
+// and nothing was claimed.
 AppendUserTurn(ctx context.Context, agentVersionID string, msg types.ChatMessage) ([]llm.ArtifactRefBlock, error)
 
-// RecordToolArtifacts inserts origin='tool_result' rows, already consumed by messageID.
-RecordToolArtifacts(ctx context.Context, sessionID, messageID string, refs []llm.ArtifactRefBlock) error
+// AppendToolMessage persists a tool-role message and one origin='tool_result' row
+// per ref (message_id = msg.ID) in one transaction. refs may be empty.
+AppendToolMessage(ctx context.Context, agentVersionID string, msg types.ChatMessage, refs []llm.ArtifactRefBlock) error
 ```
 
 Claim SQL (inside the message-insert transaction):
 
 ```sql
-UPDATE <table> SET consumed_by_message_id = $msg, updated_at = now()
-WHERE session_id = $s AND origin = 'upload' AND consumed_by_message_id IS NULL
-RETURNING store_id, uri, mime, size_bytes, sha256, filename, created_at
+UPDATE <table> SET message_id = $msg, updated_at = now()
+WHERE session_id = $s AND origin = 'upload' AND message_id IS NULL
+RETURNING id, store_id, uri, mime, size_bytes, sha256, filename, created_at
 ```
 
-Rows are ordered by `created_at` in Go after `RETURNING`. Concurrent turns on one session: row locks make the second `UPDATE` wait and then match zero rows, so each pending artifact is added to exactly one message. If the turn fails after the transaction commits (LLM error, tool error), the refs are already in history and are seen on the next turn — nothing is lost or added twice.
+Rows are ordered by `(created_at, id)` in Go after `RETURNING`. Concurrent turns on one session: row locks make the second `UPDATE` wait and then match zero rows, so each pending artifact is added to exactly one message. If the turn fails after the transaction commits (LLM error, tool error), the refs are already in history and are seen on the next turn — nothing is lost or added twice.
 
-The orchestrator calls `AppendUserTurn` in place of its current user-message `AppendMessages` call, and `RecordToolArtifacts` after appending a tool-role message that carries normalised refs. Internal callers of `Orchestrator.Turn` may still pass `artifact_ref` input blocks directly; only the HTTP parsers drop them.
+The orchestrator calls `AppendUserTurn` in place of its current user-message `AppendMessages` call, and `AppendToolMessage` in place of its tool-role `AppendMessages` call. Because message and rows commit together, a ref is never in history without a row (which would make it unretrievable), and a row never exists without its message.
+
+The orchestrator's user-input `artifact_ref` path is removed: `Orchestrator.Turn` input carries text blocks only, and user-role refs come solely from `AppendUserTurn`. (Verified: no internal caller — eval, training — drives `Orchestrator.Turn`.)
+
+**Pending cap enforcement** is atomic via the session-row lock in the upload transaction (§ REST — deployed, upload steps).
 
 ### Rendering robustness
 
 A consumed artifact stays in history and is re-rendered on every later turn, so a ref that makes rendering fail would fail every later turn of the session. Rules in `renderArtifactsForLLM` and the Anthropic renderer:
 
-- **Blob missing** (`ErrBlobMissing` from `Get`/`Sign`/signed fetch) → text surrogate, `warn` log. Permanent condition; failing would brick the session. (Previously: turn failed.)
-- **Other store errors** (network, 5xx, auth) → turn fails as today (`artifact_render`). Transient; the next turn retries.
+- **Any fetch error** from `RenderArtifactAsBlock` (other than `ErrUnsupported`) → the framework calls `adapter.Stat(uri)`:
+  - `Stat` reports not found → text surrogate, `warn` log. Permanent condition; failing would brick the session. (Previously: turn failed.)
+  - otherwise (blob exists, or `Stat` itself errors) → turn fails as today (`artifact_render`). Transient; the next turn retries.
+
+  Using `Stat` rather than the signed fetch's HTTP status avoids misreading S3's `403 AccessDenied` for a missing key as a missing blob; § Assumptions requires store credentials under which a missing key is reported as not-found, and `Probe()` verifies it.
 - **Provider limits** — the renderer returns `ErrUnsupported` (→ text surrogate) when `size_bytes` exceeds the provider's documented per-block limit for that MIME. Anthropic limits are pinned in the renderer from the provider's documentation at implementation time.
 - **Stored MIME is trusted by the renderer** because § MIME resolution guarantees native-render labels only on bytes that sniff (and, for images, decode) as that type.
 
+### Sub-agents
+
+Applies once `multiagent-feature` (child sessions + the `agent` tool) is implemented; whichever of the two specs lands second implements and tests these rules. It matches `multiagent-feature`'s own text-only decision.
+
+- **Artifact scope is per session.** A child session has its own rows in the same table (`chat_session_artifacts` / `deployed_session_artifacts` — a child is a row in `chat_sessions` / `deployed_sessions`). There is no inheritance between root and child in either direction.
+- **The `agent` tool carries text only.** No `artifacts` argument, no refs in its result; the root's `agent` tool-result message never contains `artifact_ref` blocks.
+- **Child tool results** are normalised and recorded as `tool_result` rows on the child session; the child's LLM sees them. The root's LLM and the end user do not.
+- **No `ARTIFACT_REF` for child tool results** is forwarded to the root's stream (unlike the child's `TOOL_CALL_*` events, which `multiagent-feature` forwards tagged with `child_session_id`). A forwarded event would point at a ref the user cannot read.
+- **Child sessions are not addressable by artifact routes.** Upload, pending list/remove and retrieval on both surfaces return `404` for a session with `parent_session_id IS NOT NULL`. Children never have pending artifacts (they have no user turns). The BO read-only child transcript renders child `artifact_ref` blocks as filename labels without a link.
+- **LLM-written refs are never trusted.** `artifact_ref` blocks enter a message only via `AppendUserTurn` (claimed rows) or `AppendToolMessage` (normalised tool results). A `{store_id, uri}` the LLM writes into `tool_use` input is opaque JSON passed to the tool unchanged; the framework never resolves, renders or authorises it, so prompt injection cannot pull another session's blob into a message.
+
 ### Stream event — `ARTIFACT_REF`
 
-Internal: `transport.ArtifactRefEvent{ToolCallID, StoreID, URI, MIME, SizeBytes, Sha256, Filename}`. Emitted by the orchestrator immediately after the `ToolResultEvent` for a tool call whose result produced refs, one event per ref. Not emitted for user uploads (the uploading client already knows them).
+Internal: `transport.ArtifactRefEvent{ToolCallID, StoreID, URI, MIME, SizeBytes, Sha256, Filename}`. Not emitted for user uploads (the uploading client already knows them) or for child-session tool results (§ Sub-agents).
+
+**Ordering and no bytes on the stream.** Today the orchestrator sends `ToolResultEvent` with the raw tool output (including base64 `ImageContent`) *before* normalisation runs. This spec reorders it: normalise first, then send `ToolResultEvent` carrying the **normalised remainder** (inline media removed), then one `ArtifactRefEvent` per ref. Artifact bytes therefore never travel over SSE, upholding `ddd/contexts/deployed-runtime.md § Invariants`. With the registry disabled, normalisation does not run and `ToolResultEvent` carries the raw output as today.
+
+**Payload evolution.** This is stream framing, not a domain event (the arch declares none), so `events.md` `schemaVersion`/`eventId` rules do not apply. The `value` payload only ever changes additively; fields are never removed or repurposed.
 
 **AG-UI encoding** — AG-UI `CUSTOM` event (the protocol's extension mechanism; official SDKs validate `type` against a closed set, so a new top-level type would fail validation instead of being ignored):
 
@@ -257,7 +304,7 @@ Clients build the retrieval URL from `store_id` + `uri` against their own surfac
 
 Existing `ARTIFACT_STORE_<ID>_*`, `ARTIFACT_STORE_DEFAULT`, `ARTIFACT_MAX_UPLOAD_MB`, `ARTIFACT_SIGNED_URL_TTL_SECONDS` unchanged.
 
-**Registry disabled** (no store groups): no artifact or pending-artifact routes on either surface, turns behave as today, no `ARTIFACT_REF` events.
+**Registry disabled** (no store groups): no artifact or pending-artifact routes on either surface, turns behave as today except that the empty-turn `400` rule still applies, no `ARTIFACT_REF` events.
 
 ### Deploy config
 
@@ -278,7 +325,10 @@ Existing `ARTIFACT_STORE_<ID>_*`, `ARTIFACT_STORE_DEFAULT`, `ARTIFACT_MAX_UPLOAD
 - `c4/data-flows.md § Multimodal chat with artifacts` and `bizbok/value-streams.md § Multimodal chat with artifacts`: turn content is text only; pending artifacts are added server-side.
 - Stale route paths: `nfrs.md § Security`, `c4/deployment.md` threat-model row "Artifact ref leak", `constraints.md` `ARTIFACT_MAX_UPLOAD_MB` bullet, `ddd/contexts/feedback-datasets.md` invariant naming `/chat-sessions/{id}/artifacts`.
 - `ddd/contexts/deployed-runtime.md § Published surface` ("older SDKs see it as an unknown event") and `modularity/open-bbcd/deployed-runtime/README.md` (upload response, `ARTIFACT_REF` wording).
-- `c4/integrations.md` artifact-store adapter contract: `Sign` gains `SignOptions` (response content-type / disposition overrides).
+- `c4/integrations.md` artifact-store adapter contract: `Sign` gains `SignOptions` (response content-type / disposition overrides); `Probe()` checks missing-key detection.
+- **Sub-agent artifact scope (narrows `multiagent-tools`):** `nfrs.md § Security › Sub-agent trust model` ("refs may flow between parent and child in both directions" → per-session scope, no flow); `ddd/contexts/feedback-datasets.md` child session "inherits the root's … artifact scope" → does not; `c4/integrations.md § Agent tool` signature loses `artifacts?` / `artifacts`; `glossary.md` *Agent tool* and *Sub-agent* rows; `assumptions.md` agent-tool bullet ("+ optional `artifact_ref`s", "any `artifact_ref`s as the tool result"); `ddd/contexts/deployed-runtime.md` — child `ARTIFACT_REF` events are not forwarded.
+- **Inner-ref pointers:** `ddd/contexts/artifacts.md § Published surface` (the `{store_id, uri}` pointer inside `tool_input` / `tool_result`, "leg 4") and the *agent-to-tool argument* leg in `modularity/open-bbcd/artifacts/README.md`: the framework does not resolve them; tool inputs are opaque.
+- `bizbok/capabilities.md § deployed-runtime-artifacts` ("End user uploads artifacts alongside a user turn") → staged pending artifacts consumed by the next turn; `c4/containers.md` ("store-config CRUD" — there is none; registry is env-only).
 
 ## Acceptance criteria
 
@@ -286,12 +336,16 @@ Integration tests run against MinIO (compose `artifacts` profile) unless marked 
 
 ### Upload (both surfaces)
 
-- Deployed upload with valid `file`, matching `user_id` returns `201` with `{id, store_id, uri, filename, mime, size_bytes, sha256, status:"pending"}`; `store_id` equals `ARTIFACT_STORE_DEFAULT`, `uri` equals `sha256/<sha256>`; `sha256` equals the sha256 of the bytes; a `deployed_session_artifacts` row exists with `origin='upload'`, `consumed_by_message_id IS NULL`.
+- Deployed upload with valid `file`, matching `user_id` returns `201` with `{id, store_id, uri, filename, mime, size_bytes, sha256, status:"pending"}`; `store_id` equals `ARTIFACT_STORE_DEFAULT`, `uri` equals `sha256/<sha256>`; `sha256` equals the sha256 of the bytes; a `deployed_session_artifacts` row exists with `origin='upload'`, `message_id IS NULL`.
 - BO upload returns the same shape and writes a `chat_session_artifacts` row; every field of PR #53's response is present with the same value it had before.
 - Deployed and BO GET of `/artifacts/{store_id}/{uri}` built from an upload response succeeds while the artifact is still pending.
 - Deployed upload with a `user_id` that does not own the session → `404`; with the session under a different `agent_id` → `404`; for an agent with no DEPLOYED version → `404`; missing `user_id` → `400`.
 - BO upload on a session with `locked_at IS NOT NULL` → `409`.
 - The `ARTIFACT_MAX_PENDING + 1`-th pending artifact on a session → `409`; after a turn consumes them, uploads succeed again.
+- With the session at the cap, uploading bytes identical to an existing pending row returns that row (`201`), not `409`.
+- `ARTIFACT_MAX_PENDING` concurrent uploads of distinct files plus one more, all in parallel: exactly `ARTIFACT_MAX_PENDING` rows exist afterwards and one request got `409` (Postgres, unit).
+- A dedup hit with a different multipart filename returns the existing row's `filename`.
+- When `adapter.Stat` errors during upload, `Put` is still attempted and a successful `Put` yields `201`.
 - Upload over `ARTIFACT_MAX_UPLOAD_MB` → `413` and no store call (mock spy, unit).
 - Uploading identical bytes twice while the first is pending returns the same `id` and creates no second row; `adapter.Put` is called at most once.
 - Uploading bytes identical to an already-consumed upload in the same session creates a new pending row.
@@ -308,16 +362,20 @@ Integration tests run against MinIO (compose `artifacts` profile) unless marked 
 
 ### Rendering robustness
 
-- A consumed ref whose blob was removed from the bucket: the next turn succeeds, the LLM request carries the text surrogate for it, and a `warn` is logged.
+- A consumed ref whose blob was removed from the bucket: the next turn succeeds, the LLM request carries the text surrogate for it, and a `warn` is logged (MinIO, signed-URL adapter).
 - A store network error during rendering fails the turn with `artifact_render`; the next turn with the store healthy renders natively.
 - An `image/png` ref above the pinned Anthropic image limit is rendered as a text surrogate (unit).
 
 ### Turn / claim
 
-- After two uploads (A then B) and a turn with text "summarise", the persisted user message content is `[text, artifact_ref(A), artifact_ref(B)]`; both rows have `consumed_by_message_id` = that message's id.
+- After two uploads (A then B) and a turn with text "summarise", the persisted user message content is `[text, artifact_ref(A), artifact_ref(B)]`; both rows have `message_id` = that message's id.
+- Reloading the session history (`LoadMessages` → `parseBlocks`) returns the `artifact_ref` blocks with all fields intact, on both surfaces; the next turn's LLM request includes them.
+- `blocksToJSON` given an `InlineMediaBlock` returns an error (unit).
 - The `artifact_ref` blocks' `mime`/`size_bytes`/`sha256`/`filename` equal the row values.
 - A turn body containing an `artifact_ref` block (any `store_id`/`uri`) does not add that block to the persisted message (both surfaces).
-- A turn with empty text and one pending artifact is accepted and the message contains only the `artifact_ref` block; a turn with empty text and no pending artifacts is rejected as today.
+- A turn with empty text and one pending artifact is accepted and the message contains only the `artifact_ref` block.
+- A turn with empty text and no pending artifacts → `400` with body `empty turn: no text and no pending artifacts`, before any SSE bytes; nothing persisted (both surfaces).
+- A text-less turn whose only pending artifact is deleted between the validity check and the claim: the stream carries `RUN_ERROR` with code `empty_turn`, and no user message is persisted (unit, with a store stub that deletes between check and claim).
 - A turn with no pending artifacts persists exactly as today (no behaviour change).
 - Two concurrent turns on one session with one pending artifact: exactly one persisted user message carries the ref (unit test against Postgres with parallel transactions).
 - An LLM failure after the user message is persisted leaves the rows consumed and the refs in history; the next turn's LLM request includes them.
@@ -325,7 +383,9 @@ Integration tests run against MinIO (compose `artifacts` profile) unless marked 
 
 ### Tool-result artifacts + event
 
-- A deployed turn whose MCP tool returns `ImageContent` produces: an `artifact_ref` on the tool-role message, a `deployed_session_artifacts` row with `origin='tool_result'` consumed by that message, and an AG-UI `CUSTOM` event with `name:"ARTIFACT_REF"` emitted after the corresponding tool-result event, carrying the matching `toolCallId`, `storeId`, `uri`, `mime`, `sizeBytes`, `sha256`.
+- A deployed turn whose MCP tool returns `ImageContent` produces: an `artifact_ref` on the tool-role message, a `deployed_session_artifacts` row with `origin='tool_result'` and `message_id` = that message, and an AG-UI `CUSTOM` event with `name:"ARTIFACT_REF"` emitted after the corresponding tool-result event, carrying the matching `toolCallId`, `storeId`, `uri`, `mime`, `sizeBytes`, `sha256`.
+- The `TOOL_CALL_RESULT` event for that call contains no base64 image data (the `ImageContent` item is absent from its `content`).
+- If the row insert fails, the tool-role message is not persisted either (single transaction; unit with a failing insert).
 - Same on BO.
 - JSONL transport emits `{"type":"artifact_ref", …}` with the same fields (unit).
 - No `ARTIFACT_REF` event is emitted for claimed user uploads.
@@ -336,12 +396,13 @@ Integration tests run against MinIO (compose `artifacts` profile) unless marked 
 - GET for a tool-result ref recorded on the session succeeds.
 - GET for a `(store_id, uri)` that exists in the store but has no row for this session → `404`, including when the same blob has a row in another session.
 - GET with wrong `user_id`, wrong `agent_id`, or unregistered `store_id` → `404`; missing `user_id` → `400`.
-- GET after the blob is removed from the bucket → `410`.
+- GET after the blob is removed from the bucket → `410` (MinIO, signed-URL adapter — via the `Stat` step).
+- `Probe()` against credentials without list permission fails boot naming the permission (unit, stubbed `403` on `Stat` of a missing key).
 - Bytes-mode adapter (mock, unit): `200` with `Content-Type` = row `mime` and `Content-Length` = row `size_bytes`.
 
 ### Pending-artifact queue
 
-- `GET …/pending-artifacts` lists unconsumed uploads in `created_at` order as pending-artifact objects; `[]` after a turn consumes them (both surfaces).
+- `GET …/pending-artifacts` lists unconsumed uploads in `(created_at, id)` order as pending-artifact objects; `[]` after a turn consumes them (both surfaces).
 - `DELETE …/pending-artifacts/{id}` on a pending row → `204`; the next turn does not include it; the list no longer shows it; the blob is still in the bucket.
 - `DELETE` on a consumed row → `409`; on an `id` from another session, a wrong `user_id`, or a wrong `agent_id` → `404`.
 - `DELETE` then re-upload of the same file creates a new pending row with a new `id`.
@@ -349,10 +410,11 @@ Integration tests run against MinIO (compose `artifacts` profile) unless marked 
 - BO `DELETE` on a locked session → `409`.
 - BO chat view renders a chip per pending artifact on page load; its remove control deletes it.
 
-### BO backfill
+### Sub-agents (once `multiagent-feature` is implemented)
 
-- Given a `chat_messages` row written under PR #53 with one user-role `artifact_ref` block, after migration `027` a `chat_session_artifacts` row exists with `origin='upload'` and `consumed_by_message_id` = that message's id, and BO GET for the ref succeeds.
-- A tool-role message's `artifact_ref` backfills with `origin='tool_result'`; legacy non-array content rows are skipped without error.
+- A child session whose MCP tool returns `ImageContent`: the row is written on the child session; the root's stream carries the child's tagged `TOOL_CALL_*` events but no `ARTIFACT_REF`; the root's `agent` tool-result message contains no `artifact_ref`.
+- Upload, pending list/remove and retrieval addressed at a child session id → `404` (both surfaces).
+- An LLM `tool_use` whose input contains `{"store_id":"MAIN","uri":"sha256/<hex of a blob in another session>"}` results in no row and no `artifact_ref` in any message of this session; retrieval of that ref here → `404`.
 
 ### Lifecycle, config, feature-off
 
@@ -368,16 +430,20 @@ Integration tests run against MinIO (compose `artifacts` profile) unless marked 
 - **The operator gateway rewrites `user_id` to the verified identity** on every deployed route, including the new upload and retrieval routes. Same trust model as existing deployed routes; the daemon does no authentication.
 - **All pending artifacts going with the next turn is the right UX.** Users upload, then send; everything pending goes with the next message. No per-file choice at send time.
 - **`ARTIFACT_MAX_PENDING=10` is a sensible default** for LLM request size alongside `ARTIFACT_MAX_UPLOAD_MB`; deployers tune it.
-- **The existing AG-UI encoder can emit `CUSTOM` events** without a library change (hand-rolled SSE encoder, verified at implementation time).
-- **No internal caller other than the HTTP turn handlers depends on client-embedded refs.** Verified for eval/training (neither drives `Orchestrator.Turn`); re-checked at implementation.
+- **The AG-UI encoder can emit `CUSTOM` events** without a library change: `internal/transport/agui` uses the community Go SDK (`pkg/core/events`, `pkg/encoding/sse`), which provides `events.NewCustomEvent`.
+- **No internal caller other than the HTTP turn handlers drives `Orchestrator.Turn`** (verified for eval/training), so removing its user-input ref path breaks nothing.
+- **Store credentials report a missing key as not-found.** For `s3_compatible`, the credentials include `s3:ListBucket` on the bucket, without which S3 returns `403` for a missing key. `Probe()` gains a step: `Stat` on a random non-existent key must return not-found; otherwise boot fails with an error naming the permission. MinIO and AWS S3 both behave this way with list permission.
 
 ### Risks
 
 - **Turn-body contract change on BO.** Refs sent in the turn body are now ignored. A client built against PR #53's "upload, then embed the returned ref" flow keeps working unchanged: its upload creates a pending artifact, the next turn adds it server-side, and the embedded ref it also sends is dropped — same persisted result. The upload response is additive. What such a client cannot do any more is attach a ref it did not upload to this session, which is the intended restriction. Mitigation: release notes for the downstream project.
-- **BO refs written under PR #53 have no table row**, so their retrieval now returns `404`. Mitigation: migration `027` backfills them (see Contracts § BO backfill), so datasets closed on such sessions keep resolvable refs. Residual risk: a ref embedded in a shape the backfill query does not recognise stays unreadable; the backfill counts inserted rows in the migration log.
+- **Blobs uploaded under PR #53 become permanently unreferenced.** PR #53 never persisted refs, so those blobs were already unreachable after their turn; no row or message will ever point at them. Deployer removes them with store lifecycle rules if needed. Datasets closed before this ships contain no refs to preserve.
 - **`filename` may carry PII** (user-chosen file names). Classified as user-provided free text; not logged by the upload handler; removed with the session cascade.
 - **Signed URLs in the `302` are bearer URLs for their TTL.** Unchanged from `chat-artifacts`; tune `ARTIFACT_SIGNED_URL_TTL_SECONDS`.
 - **Clients unaware of `CUSTOM ARTIFACT_REF`** see tool results as text only. Acceptable degradation; the ref is still in persisted history and visible via `GET session`.
+- **Empty turns are newly refused.** A client that today posts a turn with no text (e.g. a bare "continue") now gets `400`. None is known; noted in release notes.
+- **`Probe()` is stricter.** Deployments whose store credentials lack list permission fail boot after upgrade. Intended — without it, missing blobs are indistinguishable from auth failures. Noted in release notes.
+- **Sub-agent artifact scope diverges from the merged arch** until `/arch-review` syncs it (listed in § Arch deltas).
 - **Removing a pending artifact leaves its blob** in the store. Consistent with the no-GC stance; bounded by the upload cap.
 - **Provider rejects a request despite the checks** (e.g. a PDF over the provider's page limit, an encrypted PDF, an image the provider decodes differently). Because consumed refs are re-sent every turn, every later turn of that session fails. Mitigated by MIME resolution, the image structural check, and provider size limits; residual risk accepted for this phase. Follow-up: record a per-ref render-failure marker so a ref that caused a provider `4xx` falls back to a text surrogate.
 - **MIME resolution changes labels on write.** A file declared `image/png` that doesn't decode is stored and served as `application/octet-stream`; the user gets it as a download rather than inline. Intended.
@@ -388,5 +454,6 @@ Integration tests run against MinIO (compose `artifacts` profile) unless marked 
 - Parent feature: `docs/superpowers/specs/2026-09-28-chat-artifacts-design.md` (BO, OpenBBC PR #53).
 - Arch-of-record: `docs/architecture/logs/2026-09-28-artifact-support/README.md`; `docs/architecture/current/ddd/contexts/artifacts.md`; `docs/architecture/current/ddd/access-model.md`; `docs/architecture/current/c4/integrations.md § AG-UI ARTIFACT_REF`.
 - Modularity: `docs/architecture/current/modularity/open-bbcd/{deployed-runtime,feedback-datasets,artifacts}/README.md`.
-- Conventions: `docs/conventions/persistence.md` (per-context ownership, additive migrations, PII).
+- Conventions: `docs/conventions/persistence.md` (per-context ownership, additive migrations, PII); `docs/conventions/api.md` (deviations stated in § REST conventions).
+- Related spec: `spec/multiagent-feature` branch, `docs/superpowers/specs/2026-09-30-multiagent-feature-design.md` (text-only agent tool).
 - Follow-ups: artifact handling strategy (text-like MIME rendering, pluggable fallback); per-provider native multimodal; `chat-artifacts-gc`.
