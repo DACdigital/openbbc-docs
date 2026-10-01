@@ -57,10 +57,10 @@ Linked to [`integrations.md`](integrations.md):
   machine.
 - **Object store** — deployer-provided artifact blob backend (AWS S3, MinIO, GCS with HMAC,
   R2, B2, any S3-API endpoint). Reached from `open-bbcd` via the `artifact-store-adapter`
-  (`s3_compatible` first kind) using deployer-configured credentials in
-  `artifact_stores.config`.
+  (`s3_compatible` first kind) using deployer-configured credentials from
+  `ARTIFACT_STORE_<ID>_*` env vars (there is no `artifact_stores` table).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 2, § 5, § 7, ARCHITECTURE.md § Protocols on 2026-09-28. Updated 2026-09-28 for artifact-support — added Object store external system. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2, § 5, § 7, ARCHITECTURE.md § Protocols on 2026-09-28. Updated 2026-09-28 for artifact-support — added Object store external system. Updated 2026-10-01 for sync-deployed-runtime-artifacts — Object store credentials come from env vars. -->
 
 ## System boundary
 

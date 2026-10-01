@@ -79,10 +79,17 @@ reads server-to-server credentials for the deployer's Object store **from env va
 (`ARTIFACT_STORE_<ID>_ACCESS_KEY`, `_SECRET_KEY`, and equivalents per kind) — same handling
 class as LLM provider keys, not persisted in Postgres. This is a stronger posture than
 `tool_backends.config`: one fewer secret class in the DB, and the credentials never leave
-the deploy-time env / operator secret store. Artifact reads are session-scoped:
-`GET /artifacts/{store_id}/{uri}?session_id=…&user_id=…` returns 404 on session/user
-mismatch (same trust boundary as messages) — an `artifact_ref` `{store_id, uri}` pair is
-not a bearer capability. When an adapter returns a presigned URL in place of proxied
+the deploy-time env / operator secret store. Artifact reads are session-scoped on nested
+routes — `GET /agent_versions/{v}/chat/{s}/artifacts/{store_id}/{uri...}` (BO) and
+`GET /deployed/{agent_id}/sessions/{sid}/artifacts/{store_id}/{uri...}?user_id=X`
+(deployed) — and authorised only by a row in the session's own artifact table
+(`chat_session_artifacts` / `deployed_session_artifacts`); mismatch returns 404 (same trust
+boundary as messages) — an `artifact_ref` `{store_id, uri}` pair is not a bearer
+capability. User artifacts are staged server-side and claimed by the next turn; refs in a
+turn body are ignored, so no caller can attach or read a blob outside its own session.
+`mime` is resolved server-side from the bytes for every natively rendered type, and bytes
+responses carry `X-Content-Type-Options: nosniff` plus `Content-Disposition` (`inline` only
+for native-render types). When an adapter returns a presigned URL in place of proxied
 bytes, the URL inherits the store's TTL and access is auditable through the deployer's
 object-store logs.
 
@@ -91,14 +98,16 @@ its caller's — a caller can therefore reach backends it is not itself wired to
 worker that is. This is the intended encapsulation (admins compose topologies
 deliberately in the BO), and it is why bindings are admin-only configuration. What a
 sub-agent **inherits** from the root session: `user_id` (child sessions are scoped to the
-root's user; child reads 404 on mismatch like any session), the artifact read scope (refs
-may flow between parent and child in both directions), and — on BO chat and eval paths —
-`header_overrides` for any backend id the sub-agent also calls. The deployed path still
+root's user; child reads 404 on mismatch like any session) and — on BO chat and eval paths —
+`header_overrides` for any backend id the sub-agent also calls. Artifact scope is **not**
+inherited in either direction: each session has its own artifact rows, a child's
+tool-result artifacts are not visible to the root or the user, child `ARTIFACT_REF`s are not
+forwarded, and child sessions are not addressable by artifact routes (404). The deployed path still
 carries no header overrides, so sub-agents there use static `tool_backends.config`
-credentials only. A sub-agent never sees the parent's transcript — only the `prompt` +
-`artifact_ref`s the caller passed.
+credentials only. A sub-agent never sees the parent's transcript — only the text `prompt` the caller
+passed.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model on 2026-09-28. Updated 2026-09-28 for artifact-support — added artifact-store credentials + ref-access model. Updated 2026-09-30 for multiagent-tools — added sub-agent trust model. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model on 2026-09-28. Updated 2026-09-28 for artifact-support — added artifact-store credentials + ref-access model. Updated 2026-09-30 for multiagent-tools — added sub-agent trust model. Updated 2026-10-01 for sync-deployed-runtime-artifacts — nested row-authorised retrieval, staged uploads, MIME resolution + nosniff; per-session artifact scope for sub-agents. -->
 
 ## Compliance
 
@@ -113,9 +122,11 @@ compliance analysis has a starting inventory.
 **Artifacts add a new locus of user content — outside Postgres.** With the `artifact-support`
 capability, deployers now also need to run their compliance analysis against the configured
 Object store's residency, retention, right-to-erasure, encryption-at-rest, and access-log
-properties. `open-bbcd` holds only refs in Postgres; blob bytes and their metadata (creation
-time, byte count, MIME, checksum) live in the deployer's chosen storage backend and inherit
-whatever compliance envelope that backend provides.
+properties. Blob bytes live in the deployer's chosen storage backend and inherit whatever
+compliance envelope that backend provides. `open-bbcd` holds refs plus per-session artifact
+metadata in Postgres (`chat_session_artifacts` / `deployed_session_artifacts`: `mime`,
+`size_bytes`, `sha256`, `filename` — the filename is user-supplied and may be PII); these
+rows are removed by the session-delete cascade, while the blobs stay in the store.
 
 ## Observability
 

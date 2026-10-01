@@ -14,12 +14,18 @@ capture, and versioned dataset lifecycle (DRAFT / CLOSED with cumulative seeding
 
 Owns tables: `chat_sessions` (+ `backend_header_overrides` JSONB per migration 016,
 `locked_at` flip on dataset close), `chat_messages` (typed content-block JSONB — `text` +
-`artifact_ref` blocks post artifact-support), `chat_message_feedback` (+ `judge_criteria`
+`artifact_ref` blocks post artifact-support), `chat_session_artifacts` (migration 027;
+`session_id → chat_sessions(id) ON DELETE CASCADE`; one row per artifact in a session's read
+scope, origin `upload` | `tool_result`, `message_id NULL` = pending), `chat_message_feedback` (+ `judge_criteria`
 JSONB array per migration 021), `datasets`, `dataset_versions` (partial unique index for
 one-DRAFT-per-dataset, migration 019), `dataset_version_sessions`.
 
 Publishes: `/agent_versions/{v}/chat[/{s}/*]` (turn POST, feedback POST, header-overrides
-modal, assign-dataset), `/datasets/*` (create, list, detail, `/close-draft`,
+modal, assign-dataset; the session-scoped artifact routes — upload
+`POST …/chat/{s}/artifacts` returning the pending-artifact object, retrieval
+`GET …/chat/{s}/artifacts/{store_id}/{uri...}` authorised by a `chat_session_artifacts` row,
+`GET` / `DELETE …/chat/{s}/pending-artifacts[/{id}]` — with a locked session → `409` on
+upload and remove; the chat view renders pending artifacts), `/datasets/*` (create, list, detail, `/close-draft`,
 `/close-draft/confirm`).
 
 Invariants enforced here (repo layer, not schema): feedback attaches only to

@@ -17,7 +17,7 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
 ## Hard technical limits
 
 - **Postgres 15+ required.** `goose` migrations embedded (`//go:embed`), currently at
-  `026_agent_discovery_zip`.
+  `028_deployed_session_artifacts`.
 - **Go 1.22+, `database/sql` + `lib/pq`.** Runtime image is
   `gcr.io/distroless/static-debian12:nonroot`, CGO off.
 - **Python 3.12+ for `aikdm`, managed with `uv`.** Multi-provider LLM via Google ADK +
@@ -69,9 +69,13 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
 - **`ARTIFACT_MAX_UPLOAD_MB` env var caps per-artifact upload size.** No default is shipped
   — deployers set this explicitly at install time (rationale: any single default would be
   wrong for either text-heavy or media-heavy deployments). Enforced at the upload boundary
-  on both `POST /chat-sessions/{id}/artifacts` and
-  `POST /deployed/{agent_id}/sessions/{id}/artifacts`; retrieval is not capped so refs
-  stored under a lower prior cap remain readable.
+  on both `POST /agent_versions/{v}/chat/{s}/artifacts` and
+  `POST /deployed/{agent_id}/sessions/{sid}/artifacts?user_id=X` (`413`, before any store
+  call); retrieval is not capped so refs stored under a lower prior cap remain readable.
+- **`ARTIFACT_MAX_PENDING` env var caps pending artifacts per session.** Optional, default
+  `10`, must be ≥1; an invalid value fails boot. An upload that would exceed the cap on a
+  session's not-yet-consumed artifacts is refused with `409` (a dedup hit on an
+  already-pending blob does not count). Applies to both the BO and deployed upload routes.
 - **Artifact stores are configured via env vars only — no REST/DB surface.** Each store is
   declared through `ARTIFACT_STORE_<ID>_KIND` plus kind-specific vars (e.g.
   `ARTIFACT_STORE_<ID>_ENDPOINT`, `_BUCKET`, `_ACCESS_KEY`, `_SECRET_KEY` for the
@@ -85,18 +89,20 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
 - **`<ID>` slug in env-var names is the `store_id` on refs.** Refs carry the slug
   verbatim; renaming a store id between deploys breaks every historical ref that pointed
   at it. Ids must be stable across the lifetime of any blob any locked session references.
-- **Artifact bytes must not be stored in Postgres.** `chat_messages.content` and
-  `deployed_messages.content` JSONB carry only `artifact_ref` pointers (`{store_id, uri,
-  mime, size_bytes, sha256}`); blob bytes flow through the `artifact-store-adapter` to the
-  deployer's Object store. Repo-layer guards reject any attempt to inline base64 payloads
-  in a content block.
+- **Artifact bytes must not be stored in Postgres when the artifact registry is enabled.**
+  `chat_messages.content` and `deployed_messages.content` JSONB carry only `artifact_ref`
+  pointers (`{store_id, uri, mime, size_bytes, sha256}`); blob bytes flow through the
+  `artifact-store-adapter` to the deployer's Object store. Repo-layer guards reject any
+  attempt to persist rendered media bytes in a content block. With the registry disabled,
+  tool-result normalisation does not run and raw tool output (possibly carrying base64
+  media) is persisted as before.
 - **Artifact-store kinds are versioned via the `kind` env-var value.** First-shipped kind:
   `s3_compatible`. Adding a new kind is a code change (register the adapter + declare its
   env-var schema) — not a runtime plug-in surface.
 - **`ARTIFACT_SIGNED_URL_TTL_SECONDS` (optional, default `300`) caps presigned-URL TTL.**
   Applies only when an adapter's `PreferredDelivery()` is `SignedURL` — the framework passes
-  this value to `adapter.Sign(uri, ttl)`. Deployers may tune it; the default `300s` (five
+  this value to `adapter.Sign` as `ttl`. Deployers may tune it; the default `300s` (five
   minutes) balances CDN-cacheable link lifetime against replay risk. Ignored by adapters
   whose `PreferredDelivery()` is `Bytes` (proxied read).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. Updated 2026-09-30 for multiagent-tools — added AGENT_TOOL_MAX_DEPTH, AGENT_TOOL_MAX_PARALLEL, DAG topology rule, target-status rule. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. Updated 2026-09-30 for multiagent-tools — added AGENT_TOOL_MAX_DEPTH, AGENT_TOOL_MAX_PARALLEL, DAG topology rule, target-status rule. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028, nested upload paths, ARTIFACT_MAX_PENDING, bytes rule scoped to an enabled registry. -->

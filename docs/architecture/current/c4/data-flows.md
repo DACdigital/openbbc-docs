@@ -136,27 +136,40 @@ sequenceDiagram
     participant BE as Client backend
 
     Note over OBBCD, STORE: precondition, operator declared at least one ARTIFACT_STORE via env at deploy time and set ARTIFACT_STORE_DEFAULT
-    User->>OBBCD: POST sessions sid artifacts multipart file
-    OBBCD->>STORE: put bytes bounded by ARTIFACT_MAX_UPLOAD_MB via adapter
-    STORE-->>OBBCD: uri plus size_bytes plus sha256
-    OBBCD-->>User: 201 with store_id uri mime size sha256
+    User->>OBBCD: POST session artifacts multipart file
+    OBBCD->>OBBCD: hash and buffer bytes bounded by ARTIFACT_MAX_UPLOAD_MB, resolve mime server side
+    OBBCD->>STORE: stat uri, put bytes via adapter only if missing
+    OBBCD->>DB: INSERT pending session artifact row, refused at ARTIFACT_MAX_PENDING
+    OBBCD-->>User: 201 pending artifact with id store_id uri mime size sha256 status
+    opt before sending
+        User->>OBBCD: GET or DELETE session pending artifacts
+    end
 
-    User->>OBBCD: POST turn user content is text plus artifact_ref block
-    OBBCD->>DB: INSERT message content JSONB with typed blocks
-    OBBCD->>BE: tool call, artifact arg materialised as inline bytes or presigned url per backend contract
-    BE-->>OBBCD: tool result with ImageContent or EmbeddedResource
+    User->>OBBCD: POST turn with text blocks only, client artifact_ref blocks ignored
+    OBBCD->>DB: one transaction, INSERT user message and claim every pending row as artifact_ref blocks
+    OBBCD->>BE: tool call, tool input passed unchanged and never resolved for artifacts
+    BE-->>OBBCD: tool result with inline ImageContent or EmbeddedResource
     OBBCD->>STORE: put unpacked bytes via adapter
     STORE-->>OBBCD: uri
-    OBBCD->>DB: INSERT tool role message with artifact_ref block
+    OBBCD-->>User: TOOL_CALL_RESULT with the normalised remainder and no bytes
+    OBBCD->>DB: one transaction, INSERT tool role message with artifact_ref blocks and tool_result rows
+    OBBCD-->>User: after commit, ARTIFACT_REF as CUSTOM event on AG UI or artifact_ref frame on JSONL
 
-    OBBCD-->>User: assistant reply on chat or ARTIFACT_REF event on AG UI stream
-    User->>OBBCD: GET artifacts store_id uri with session_id user_id
-    OBBCD->>STORE: get or sign uri
+    User->>OBBCD: GET session artifacts store_id uri on the nested route of its own surface
+    OBBCD->>DB: SELECT session artifact row for session, store_id and uri
+    OBBCD->>STORE: stat uri, then get or sign uri
     STORE-->>OBBCD: bytes or signed url
-    OBBCD-->>User: bytes or 302 redirect
+    OBBCD-->>User: bytes with nosniff and content disposition, or 302 redirect, or 410 if blob missing
 ```
 
-<!-- new data flow added 2026-09-28 for artifact-support. GitHub-safe mermaid syntax per diagram conventions. -->
+Uploads are staged, never client-asserted: the client receives a pending artifact and the
+next turn claims it server-side, so a turn body cannot attach another session's ref. Every
+read is authorised by a row in the owning context's session-artifact table
+(`chat_session_artifacts` on BO, `deployed_session_artifacts` on deployed); any failure is
+`404`. With the artifact registry disabled no artifact routes are registered and raw tool
+output is streamed and persisted as before.
+
+<!-- new data flow added 2026-09-28 for artifact-support. GitHub-safe mermaid syntax per diagram conventions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — staged pending artifacts claimed with the user message, no artifact-arg materialisation, tool_result rows + ARTIFACT_REF after commit, row-authorised nested retrieval. -->
 
 ## Multi-agent delegated turn
 
@@ -173,17 +186,17 @@ sequenceDiagram
     User->>OBBCD: POST turn on root session
     OBBCD->>DB: INSERT user message on root session
     OBBCD->>LLM: completion with agent tool whose subagent enum lists binding names and notes
-    LLM-->>OBBCD: tool call agent with subagent, description, prompt, optional artifact refs
+    LLM-->>OBBCD: tool call agent with subagent, description and prompt, text only
     OBBCD-->>User: TOOL_CALL_START then STEP_STARTED named after the binding
     par up to AGENT_TOOL_MAX_PARALLEL spawns, refused past AGENT_TOOL_MAX_DEPTH
         OBBCD->>DB: INSERT child session with parent_session_id, parent_tool_call_id, depth, target version, root user_id
-        OBBCD->>SUB: run pinned target version with fresh context holding only prompt and artifacts
+        OBBCD->>SUB: run pinned target version with fresh context holding only the prompt
         SUB->>LLM: completion with the target version tools
         SUB->>BE: MCP tool call via target wiring, header_overrides inherited on BO and eval paths
         BE-->>SUB: tool result
-        SUB-->>User: child tagged TOOL_CALL events, no sub agent text tokens
+        SUB-->>User: child tagged TOOL_CALL events, no sub agent text tokens and no child ARTIFACT_REF
         SUB->>DB: INSERT child messages
-        SUB-->>OBBCD: final text plus artifact refs
+        SUB-->>OBBCD: final text, child tool result artifacts stay on the child session
     end
     OBBCD-->>User: STEP_FINISHED then TOOL_CALL_END with the sub agent result
     OBBCD->>LLM: continue root completion with tool result
@@ -199,7 +212,7 @@ if its version has the agent tool enabled; depth is counted from the root. In
 `eval-input.yaml` instead of Postgres and simulated or real MCP calls per
 `mock_mcp_tools`.
 
-<!-- new data flow added 2026-09-30 for multiagent-tools. GitHub-safe mermaid syntax per diagram conventions. -->
+<!-- new data flow added 2026-09-30 for multiagent-tools. GitHub-safe mermaid syntax per diagram conventions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — agent tool carries text only, no artifact scope flow between parent and child. -->
 
 ## Deployment
 
