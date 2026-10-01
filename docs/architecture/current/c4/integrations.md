@@ -8,9 +8,9 @@
 | Operator's auth gateway | Inbound trust mediator | HTTPS (whatever the gateway speaks upstream: session cookie, bearer, mTLS, SSO) | Gateway-owned; injects a verified `user_id` before forwarding to `open-bbcd` | Operator-owned; ARCH_GAP for internal policy |
 | Claude Code (`flow-map-compiler`) | Discovery-side skill host | Local IPC (Claude Code plugin API) | Runs client-side on the discovery author's machine; the resulting zip is uploaded via wizard authenticated by the same operator gateway that fronts the backoffice | ARCH_GAP |
 | GHCR (`ghcr.io/dacdigital/openbbc/*`) | Outbound (build/publish) + inbound (pull to k8s) | OCI registry API | GHCR PAT for publish (via `GITHUB_TOKEN` in `.github/workflows/publish-images.yml`); anonymous or `imagePullSecrets` for pull depending on package visibility | Images `open-bbcd`, `aikdm-runner`, `aikdm`; tags `pr-<num>`, `main`, `sha-<short>`, semver, `latest` |
-| Object store (deployer-provided) | Outbound artifact-store backend | S3 API over HTTPS (first-shipped `s3_compatible` `artifact-store-adapter` kind — covers AWS S3, MinIO, GCS with HMAC, R2, B2, any S3-API endpoint). Framework-side call surface is uniform `put`/`get`/`sign`/`delete`/`stat`; wire is adapter-specific. | Credentials from **env vars only** — per-store `ARTIFACT_STORE_<ID>_ACCESS_KEY`, `_SECRET_KEY`, `_ENDPOINT`, `_BUCKET`, `_REGION`, optional path-style flag; `ARTIFACT_STORE_DEFAULT=<ID>` nominates the write target. Same secret class as LLM provider API keys (not persisted in Postgres). | Deployer-owned SLA; ARCH_GAP for internal-policy targets. Regulatory tag: user-content (deployer-classified) — bytes are chat / deployed artifacts. |
+| Object store (deployer-provided) | Outbound artifact-store backend | S3 API over HTTPS (first-shipped `s3_compatible` `artifact-store-adapter` kind — covers AWS S3, MinIO, GCS with HMAC, R2, B2, any S3-API endpoint). Framework-side call surface is uniform `put`/`get`/`sign`/`delete`/`stat`; wire is adapter-specific. | Credentials from **env vars only** — per-store `ARTIFACT_STORE_<ID>_ACCESS_KEY`, `_SECRET_KEY`, `_ENDPOINT`, `_BUCKET`, `_REGION`, optional path-style flag; `ARTIFACT_STORE_DEFAULT=<ID>` nominates the write target. Same secret class as LLM provider API keys (not persisted in Postgres). Store credentials must let `Stat` report a missing key as not-found (for AWS S3 this needs `s3:ListBucket`); `probe()` verifies it at boot. | Deployer-owned SLA; ARCH_GAP for internal-policy targets. Regulatory tag: user-content (deployer-classified) — bytes are chat / deployed artifacts. |
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 3 MCP layer, § 4 Headers, § 5 Auth model, § 7 Provider LLM keys, ARCHITECTURE.md § Protocols, § flow-map-compiler on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — client-backend row split into REST-bridge/MCP-proxy alternatives; GHCR row added. Updated 2026-09-28 for artifact-support — added Object store row. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 3 MCP layer, § 4 Headers, § 5 Auth model, § 7 Provider LLM keys, ARCHITECTURE.md § Protocols, § flow-map-compiler on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — client-backend row split into REST-bridge/MCP-proxy alternatives; GHCR row added. Updated 2026-09-28 for artifact-support — added Object store row. Updated 2026-10-01 for sync-deployed-runtime-artifacts — Object store missing-key-as-not-found credential requirement. -->
 
 ## Contracts
 
@@ -22,7 +22,10 @@
   the sub-agent's own `TOOL_CALL_*` events are forwarded carrying an extra
   `child_session_id` field. Sub-agent `TEXT_MESSAGE_*` are not forwarded; the root's
   `TOOL_CALL_END` for the `agent` tool carries the result. SDKs that ignore steps or the
-  extra field still render a correct root-level conversation.
+  extra field still render a correct root-level conversation. Tool-result artifact refs are
+  carried as the `CUSTOM` `ARTIFACT_REF` event (below); the BO chat stream emits them with
+  the same semantics on both its transports (an `artifact_ref` frame on JSONL, the `CUSTOM`
+  event on AG-UI).
 - **Tool-backend wire protocol (open-bbcd ↔ client backend).** Two `tool_backends` kinds:
   - `http_endpoint` — OpenBBC's **built-in MCP-over-REST bridge**. `open-bbcd` calls the
     registered REST endpoint directly and exposes it to the agent as an MCP tool. No client
@@ -47,7 +50,8 @@
   The bundle schema (`prompt-v1.yaml`) itself is unchanged.
 - **Agent tool (open-bbcd / aikdm ↔ LLM).** Built-in tool definition presented to the LLM
   when `agent_tool_enabled`: `agent(subagent: enum<binding name>, description: string,
-  prompt: string, artifacts?: artifact_ref[])` → `{text, artifacts: artifact_ref[]}`. The
+  prompt: string)` → `text`. The tool carries text only — no artifacts argument and no refs
+  in its result; artifact scope is per session. The
   tool description renders each binding's `name` + `note`. Same definition in `open-bbcd`
   and `aikdm` so evals exercise the production contract.
 - **Drainer discovery.** `GET /agent_versions.json?status=PENDING`,
@@ -65,28 +69,40 @@
     `ARTIFACT_STORE_DEFAULT`.
   - `get(uri) → bytes` — called when `PreferredDelivery() == Bytes`. Routes to the store
     named by the `store_id` embedded in the calling `artifact_ref`.
-  - `sign(uri, ttl) → https_url` — called when `PreferredDelivery() == SignedURL`; the
-    framework passes `ttl = ARTIFACT_SIGNED_URL_TTL_SECONDS` (default `300s`). Routes to
-    the store named by the ref's `store_id`.
+  - `sign(uri, ttl, SignOptions{ContentType, ContentDisposition}) → https_url` — called
+    when `PreferredDelivery() == SignedURL`; the framework passes
+    `ttl = ARTIFACT_SIGNED_URL_TTL_SECONDS` (default `300s`) and per-request response
+    overrides (content-addressed blobs are shared by rows with different filenames); kinds
+    that cannot set response overrides ignore them. Routes to the store named by the ref's
+    `store_id`.
   - `stat(uri) → {exists, mime, size_bytes, sha256}` — `exists = false` signals the blob
     has been externally removed and drives a `410 Gone` on the retrieval route (distinct
-    from `404` for session-scope mismatch or unknown `store_id`).
+    from `404` for session-scope mismatch or unknown `store_id`). Also drives the render
+    fallback (a missing blob renders as a text surrogate instead of failing the turn) and
+    the upload `put` skip when the content-addressed blob already exists.
   - `delete(uri)`
   - `probe() → ok | error` — boot-time self-check per registered store. Boot **fails** with
     a clear error if any of: `ARTIFACT_STORE_DEFAULT` is unset while artifact routes are
     compiled in; the default store's `probe()` fails after bounded retries; any store group
-    is malformed (missing kind-specific vars); two stores declare the same `<ID>`; or
-    `ARTIFACT_MAX_UPLOAD_MB` is unset (required whenever artifact routes are wired).
+    is malformed (missing kind-specific vars); two stores declare the same `<ID>`;
+    `ARTIFACT_MAX_UPLOAD_MB` is unset (required whenever artifact routes are wired); or a
+    `stat` on a random missing key is not reported as not-found.
   Kinds are versioned via the env-var `KIND` value. First-shipped kind: `s3_compatible`.
   Adapter config schema per kind is a set of `ARTIFACT_STORE_<ID>_*` env-var names declared
   alongside the kind registration in code (not a runtime plug-in surface). No REST CRUD,
   test-connection button, or BO UI exists for stores — reconfiguration is a redeploy.
-- **AG-UI `ARTIFACT_REF` event-type extension (open-bbcd → client frontend).**
-  Complements the base AG-UI events (`RUN_STARTED`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`,
-  `TURN_END`, `ERROR`) with `ARTIFACT_REF` carrying `{store_id, uri, mime, size_bytes,
-  sha256}` inside the assistant turn. SDKs that don't understand the event ignore it (SSE
-  unknown-event semantics) and render text-only; SDKs that do understand it resolve refs
-  via `GET /artifacts/{store_id}/{uri}` scoped by the session's `user_id`. Upstream
-  AG-UI spec: [ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui).
+- **AG-UI `ARTIFACT_REF` (open-bbcd → client frontend).** Carried as an AG-UI `CUSTOM`
+  event — `{type: "CUSTOM", name: "ARTIFACT_REF", value: {toolCallId, storeId, uri, mime,
+  sizeBytes, sha256, filename}}` — because official AG-UI SDKs validate `type` against a
+  closed set, so a new top-level event type would fail validation rather than be ignored.
+  Emitted only for tool-result refs, once per ref after the round's tool-role message and its
+  session-artifact rows commit (so the ref is immediately resolvable); never for user
+  uploads, child-session tool results, or `{store_id, uri}` pointers in tool input.
+  `TOOL_CALL_RESULT` carries the normalised remainder (no base64 when the artifact registry
+  is enabled). Clients that do not handle the `CUSTOM` name ignore it and render text-only;
+  clients that do resolve the ref against their own surface's nested retrieval route
+  (`GET /deployed/{agent_id}/sessions/{sid}/artifacts/{store_id}/{uri...}?user_id=X` on the
+  deployed surface). The `value` payload changes only additively. Upstream AG-UI spec:
+  [ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § flow-map-compiler, § aikdm, § MCP wiring, § Protocols, PRODUCTION.md § 2, § 3 MCP layer, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — explicit bridge-vs-proxy contract, flow-map schema v2, drainer JSON surfaces. Updated 2026-09-28 for artifact-support — artifact-store adapter interface + AG-UI ARTIFACT_REF event extension. Updated 2026-09-30 for multiagent-tools — AG-UI step events for sub-agent progress, eval-input subagents section, agent tool contract. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § flow-map-compiler, § aikdm, § MCP wiring, § Protocols, PRODUCTION.md § 2, § 3 MCP layer, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — explicit bridge-vs-proxy contract, flow-map schema v2, drainer JSON surfaces. Updated 2026-09-28 for artifact-support — artifact-store adapter interface + AG-UI ARTIFACT_REF event extension. Updated 2026-09-30 for multiagent-tools — AG-UI step events for sub-agent progress, eval-input subagents section, agent tool contract. Updated 2026-10-01 for sync-deployed-runtime-artifacts — ARTIFACT_REF as AG-UI CUSTOM event, BO stream artifact refs, text-only agent tool, adapter SignOptions + missing-key probe. -->

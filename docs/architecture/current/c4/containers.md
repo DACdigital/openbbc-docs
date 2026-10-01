@@ -18,7 +18,7 @@ C4Container
         Container(obbcd, "open-bbcd", "Go 1.22 plus", "Backoffice UI plus REST API plus deployed agent runtime plus MCP-over-REST bridge plus artifact-store-adapter in a single binary, no local disk state")
         Container(aikdm, "aikdm", "Python 3.12 plus uv", "Generate, evaluate, train agent bundles, DB-unaware and REST-only")
         Container(aikdmrun, "aikdm-runner", "python 3.12 plus bash, curl, tini, uv, aikdm, scripts", "Kubernetes CronJob runtime that drains PENDING alphas, evals, trainings")
-        ContainerDb(db, "postgres", "PostgreSQL 15 plus", "Owns agents plus discovery_zip BYTEA, versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions, and artifact_ref content blocks embedded in message content JSONB. No artifact-store configuration in DB — registry is env-driven")
+        ContainerDb(db, "postgres", "PostgreSQL 15 plus", "Owns agents plus discovery_zip BYTEA, versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions, per-session artifact rows in chat_session_artifacts and deployed_session_artifacts, and artifact_ref content blocks embedded in message content JSONB. No artifact-store configuration in DB — registry is env-driven")
     }
 
     Rel(admin, obbcd, "backoffice plus REST", "HTTPS and htmx")
@@ -37,7 +37,7 @@ C4Container
     Rel(fmc, obbcd, "uploads flow-map zip via wizard", "HTTPS")
 ```
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Components, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added aikdm-runner container, clarified client-backend integration as REST-bridge OR MCP-proxy, added agents.discovery_zip data ownership. Updated 2026-09-28 for artifact-support — Object store external system + artifact-store-adapter inside open-bbcd; artifact refs live in message content JSONB. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Components, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added aikdm-runner container, clarified client-backend integration as REST-bridge OR MCP-proxy, added agents.discovery_zip data ownership. Updated 2026-09-28 for artifact-support — Object store external system + artifact-store-adapter inside open-bbcd; artifact refs live in message content JSONB. Updated 2026-10-01 for sync-deployed-runtime-artifacts — postgres label lists the per-session artifact tables. -->
 
 ### flow-map-compiler {#flow-map-compiler}
 
@@ -91,18 +91,23 @@ contexts: `agents` (+ `discovery_zip BYTEA` migration 026), `agent_versions` (`s
 {INITIALIZING, PENDING, DRAFT, TRAINING, READY, DEPLOYED}` per migration 025),
 `capabilities[]`, `tool_backends`, `agent_endpoint_backend`, `agent_version_mcp_backend`,
 `agent_version_subagent` (+ `agent_versions.agent_tool_enabled`),
-`chat_sessions` + `chat_messages` + `chat_message_feedback`, `datasets` + `dataset_versions`
-+ `dataset_version_sessions`, `evals` + `eval_sessions`, `training_sessions`,
-`deployed_sessions` + `deployed_messages` (both session tables also hold child sessions
+`chat_sessions` + `chat_messages` + `chat_session_artifacts` (migration 027) +
+`chat_message_feedback`, `datasets` + `dataset_versions` + `dataset_version_sessions`,
+`evals` + `eval_sessions`, `training_sessions`, `deployed_sessions` + `deployed_messages` +
+`deployed_session_artifacts` (migration 028) (both session tables also hold child sessions
 linked by `parent_session_id` + `parent_tool_call_id`). **No local disk state required** — after
 migration 026 inlined the discovery zip on `agents.discovery_zip BYTEA` the process reads
 and writes only Postgres (`DISCOVERY_STORAGE_DIR` env var no longer read;
-`internal/storage/storage.go` removed). Artifact bytes never touch Postgres — they flow
-through the `artifact-store-adapter` to the deployer-provided Object store (see
+`internal/storage/storage.go` removed). With the artifact registry enabled, artifact bytes
+never touch Postgres — they flow through the `artifact-store-adapter` to the
+deployer-provided Object store (see
 [`integrations.md`](integrations.md) and [`../ddd/contexts/artifacts.md`](../ddd/contexts/artifacts.md)).
 The artifact-store registry is held in-memory only, hydrated at boot from env vars
-(`ARTIFACT_STORE_<ID>_*` + `ARTIFACT_STORE_DEFAULT`); Postgres holds only `artifact_ref`
-blocks embedded in message-content JSONB, never store configuration or credentials.
+(`ARTIFACT_STORE_<ID>_*` + `ARTIFACT_STORE_DEFAULT`); Postgres holds `artifact_ref` blocks
+embedded in message-content JSONB and per-session artifact metadata rows
+(`chat_session_artifacts` / `deployed_session_artifacts`), never blob bytes, store
+configuration or credentials. With the registry disabled, raw tool output (possibly carrying
+base64 media) is persisted as before.
 
 **Published API / events.**
 - REST (JSON): `/evals/*`, `/training-sessions/*`, `/datasets/*`, `/agents/*/deploy`,
@@ -118,11 +123,11 @@ blocks embedded in message-content JSONB, never store configuration or credentia
 [`evaluation`](../ddd/contexts/evaluation.md) (state + UI),
 [`training`](../ddd/contexts/training.md) (state + UI),
 [`deployed-runtime`](../ddd/contexts/deployed-runtime.md),
-[`artifacts`](../ddd/contexts/artifacts.md) (store-config CRUD + adapter dispatch).
+[`artifacts`](../ddd/contexts/artifacts.md) (env-hydrated store registry + adapter dispatch).
 
 **Modularity node.** ARCH_GAP (populated later by `/modularize`).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. Updated 2026-09-30 for multiagent-tools — in-process agent tool, agent_version_subagent, child sessions. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. Updated 2026-09-30 for multiagent-tools — in-process agent tool, agent_version_subagent, child sessions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — chat_session_artifacts + deployed_session_artifacts owned; bytes invariant scoped to an enabled registry; artifacts context is an env-hydrated registry (no store-config CRUD). -->
 
 ### aikdm {#aikdm}
 
@@ -200,7 +205,7 @@ driver against `open-bbcd`'s REST surface.
 **Purpose.** Relational store for every stateful thing in OpenBBC.
 
 **Tech stack.** PostgreSQL 15+; `goose` migrations run by `open-bbcd` on boot (embedded via
-`//go:embed`, currently at `026_agent_discovery_zip`). Compose brings up `postgres` service
+`//go:embed`, currently at `028_deployed_session_artifacts`). Compose brings up `postgres` service
 healthchecked with `pg_isready`; named volume `postgres-data` persists across
 `docker compose down`. In k8s the Helm chart ships an optional in-cluster `StatefulSet`;
 production deployments typically point `externalDatabase.url` at a managed DB and disable
@@ -220,4 +225,4 @@ directly). `aikdm` itself never opens a DB connection.
 
 **Modularity node.** ARCH_GAP (populated later by `/modularize`).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § PostgreSQL, § Docker deployment on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § PostgreSQL, § Docker deployment on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028. -->

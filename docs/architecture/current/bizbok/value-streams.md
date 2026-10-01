@@ -104,33 +104,44 @@ image, tool-produced artefact).
    `ARTIFACT_STORE_<ID>_*` env vars and set `ARTIFACT_STORE_DEFAULT=<ID>`
    ([`artifact-store-adapter`](capabilities.md#l2-capabilities) loads the registry at
    boot).
-2. User submits a turn carrying an inline file (multipart on the BO chat path via
-   [`chat-artifacts`](capabilities.md#l2-capabilities); AG-UI-side upload endpoint on the
-   deployed path via [`deployed-runtime-artifacts`](capabilities.md#l2-capabilities)) —
-   `open-bbcd` streams the bytes to the store through the
-   [`artifact-store-adapter`](capabilities.md#l2-capabilities) and records an `artifact_ref`
-   content block on the user-role message.
-3. The runtime tool builder ([`mcp-tool-dispatch`](capabilities.md#l2-capabilities))
-   dispatches the turn to the agent. When the agent calls an MCP tool with an artifact
-   argument, the framework materialises the ref for the tool according to the backend
-   contract (inline base64, presigned URL, or MCP `resource` reference).
-4. If the tool result carries an `ImageContent` or `EmbeddedResource` (native MCP file
-   payload), [`chat-artifacts`](capabilities.md#l2-capabilities) /
+2. User uploads a file before sending (multipart on the BO chat path via
+   [`chat-artifacts`](capabilities.md#l2-capabilities); the deployed session's upload route
+   via [`deployed-runtime-artifacts`](capabilities.md#l2-capabilities)) — `open-bbcd` streams
+   the bytes to the store through the
+   [`artifact-store-adapter`](capabilities.md#l2-capabilities), resolves `mime` and measures
+   size / hash server-side, and records a **pending artifact** on the session. The user may
+   list or remove pending artifacts before sending.
+3. User sends the turn — the body carries text only (client-sent refs are ignored). In the
+   same transaction that persists the user-role message, `open-bbcd` claims every pending
+   artifact on the session into it as `artifact_ref` content blocks
+   ([`chat-artifacts`](capabilities.md#l2-capabilities) /
+   [`deployed-runtime-artifacts`](capabilities.md#l2-capabilities)). The runtime tool builder
+   ([`mcp-tool-dispatch`](capabilities.md#l2-capabilities)) dispatches the turn to the agent.
+   A `{store_id, uri}` the LLM writes into a tool call's input is passed to the tool
+   unchanged — the framework never resolves it.
+4. If the tool result carries an inline `ImageContent` or `EmbeddedResource` (native MCP
+   file payload), [`chat-artifacts`](capabilities.md#l2-capabilities) /
    [`deployed-runtime-artifacts`](capabilities.md#l2-capabilities) unpack it — bytes go to
-   the artifact store; an `artifact_ref` content block lands on the `tool`-role message.
-5. Assistant response may emit its own `artifact_ref` content block; on BO chat it renders
-   inline in the transcript; on the deployed path it streams through the AG-UI wire as an
-   `artifact_ref` event (AG-UI event-type extension — see
-   [`../ddd/contexts/deployed-runtime.md`](../ddd/contexts/deployed-runtime.md)).
+   the artifact store; an `artifact_ref` content block lands on the `tool`-role message and
+   is recorded as a session artifact in the same transaction.
+5. After that commit the tool-result ref is surfaced to the client: on BO chat as a filename
+   link in the transcript and live stream; on the deployed path through the AG-UI wire as a
+   `CUSTOM` `ARTIFACT_REF` event ([`ag-ui-turn-streaming`](capabilities.md#l2-capabilities);
+   see [`../ddd/contexts/deployed-runtime.md`](../ddd/contexts/deployed-runtime.md)). The
+   client fetches the file through its own surface's nested retrieval route, which
+   [`deployed-runtime-artifacts`](capabilities.md#l2-capabilities) /
+   [`chat-artifacts`](capabilities.md#l2-capabilities) authorise against the session's
+   artifact rows.
 6. On BO chat, dataset close-draft ([`dataset-authoring`](capabilities.md#l2-capabilities))
-   captures the artifact refs verbatim on the frozen session — eval replay resolves them
-   through the same adapter as at chat time.
+   captures the artifact refs verbatim on the frozen session; they are exported unchanged
+   and stay resolvable for retrieval, but eval replay is text-only (files are not replayed)
+   until an artifact-aware replay follow-up.
 
 Outcome: the user/admin exchanges any-MIME files with the agent in either direction; bytes
-remain in the deployer's chosen artifact store; the session transcript stays deterministic
-and replayable for evals.
+remain in the deployer's chosen artifact store; no caller can attach or read a blob outside
+its own session; the session transcript stays deterministic.
 
-<!-- new value stream added 2026-09-28 for artifact-support. -->
+<!-- new value stream added 2026-09-28 for artifact-support. Updated 2026-10-01 for sync-deployed-runtime-artifacts — staged pending artifacts claimed server-side, no artifact-arg materialisation or assistant emission, CUSTOM ARTIFACT_REF, text-only eval replay. -->
 
 ### Multi-agent topology
 
@@ -148,7 +159,7 @@ delegates to a coordinator that fans out to workers) behind a single entrypoint 
 3. Admin tests the root version in [`backoffice-chat`](capabilities.md#l2-capabilities).
    When the root LLM calls `agent(subagent=…, prompt=…)`,
    [`sub-agent-dispatch`](capabilities.md#l2-capabilities) creates a child session, runs the
-   target version with a fresh context, and returns its final answer (+ artifacts) as the
+   target version with a fresh context, and returns its final answer (text only) as the
    tool result. Child transcripts are inspectable from the parent's tool call.
 4. Admin curates feedback on the **root** transcript and closes a dataset
    ([`dataset-authoring`](capabilities.md#l2-capabilities)); child sessions lock with their

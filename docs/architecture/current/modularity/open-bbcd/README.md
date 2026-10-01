@@ -22,13 +22,15 @@ transactionally on behalf of the DDD contexts — agents (+ discovery_zip BYTEA 
 migration 026), agent_versions (`INITIALIZING/PENDING/DRAFT/TRAINING/READY/DEPLOYED` per
 migration 025), tool_backends + `agent_endpoint_backend` + `agent_version_mcp_backend` +
 `agent_version_subagent`, chat_sessions (root + child sessions) + chat_messages +
-chat_message_feedback, datasets + dataset_versions, evals + eval_sessions,
-training_sessions, deployed_sessions (root + child sessions) + deployed_messages, and
-`artifact_ref` content blocks embedded in message JSONB.
+chat_session_artifacts (migration 027) + chat_message_feedback, datasets + dataset_versions,
+evals + eval_sessions, training_sessions, deployed_sessions (root + child sessions) +
+deployed_messages + deployed_session_artifacts (migration 028), and `artifact_ref` content
+blocks embedded in message JSONB.
 
 **No local disk state.** Discovery zip inline in Postgres (mig 026); artifact bytes flow
 through the pluggable `artifact-store-adapter` to the deployer's Object store (never touch
-Postgres). Artifact-store registry is env-driven, hydrated at boot.
+Postgres when the artifact registry is enabled; with it disabled, raw tool output is
+persisted as before). Artifact-store registry is env-driven, hydrated at boot.
 
 **Primary DDD context:** [`agent-lifecycle`](../../ddd/contexts/agent-lifecycle.md). Also
 hosts [`feedback-datasets`](../../ddd/contexts/feedback-datasets.md),

@@ -26,13 +26,14 @@
 8. **Artifact management** — accept, store, retrieve, and delete user-visible file objects
    (artifacts) exchanged inside chat and deployed sessions. Cross-cutting substrate: bytes
    live in a deployer-configured artifact store behind a pluggable adapter; `open-bbcd`
-   holds only refs. Consumed by `Feedback & dataset curation` (via `chat-artifacts`) and
-   `Deployed agent runtime` (via `deployed-runtime-artifacts`). Store registry is loaded
+   holds only refs and per-session artifact metadata. Consumed by `Feedback & dataset
+   curation` (via `chat-artifacts`) and `Deployed agent runtime` (via
+   `deployed-runtime-artifacts`). Store registry is loaded
    **at boot from env vars** — there is no REST / BO surface for adding, removing, or
    reconfiguring stores at runtime; credentials handling matches the LLM-API-key pattern,
    not the `tool_backends` pattern.
 
-<!-- migrated from _migration-quarantine/DESIGN.md § Flow (phases 0–V), ARCHITECTURE.md § Components on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added "Batch drainer operations" L1 to cover the alpha drainer and Helm CronJobs. Updated 2026-09-28 for artifact-support — added "Artifact management" L1. -->
+<!-- migrated from _migration-quarantine/DESIGN.md § Flow (phases 0–V), ARCHITECTURE.md § Components on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added "Batch drainer operations" L1 to cover the alpha drainer and Helm CronJobs. Updated 2026-09-28 for artifact-support — added "Artifact management" L1. Updated 2026-10-01 for sync-deployed-runtime-artifacts — per-session artifact metadata in Postgres. -->
 
 ## L2 capabilities
 
@@ -85,15 +86,19 @@
   next DRAFT from CLOSED.
 - `judge-criteria-capture` — per-message JSONB `judge_criteria` (migration 021); required for
   dataset close.
-- `chat-artifacts` — attach, receive, and reference artifacts inside a BO chat session.
-  Three legs: admin uploads a file with the user turn; MCP tool result carrying
-  `ImageContent` / `EmbeddedResource` is unpacked into an `artifact_ref` content block on
-  a `tool`-role message; assistant references an existing artifact when calling a tool
-  (via a `{store_id, uri}` inner-ref pointer in `tool_input`). There is **no** assistant-
-  emission leg — the LLM does not itself generate binary content; only tools return
-  artifacts back to the assistant. Artifact refs persist on `chat_messages.content` JSONB;
-  bytes live in the env-configured default artifact store (see `artifact-store-adapter`).
-  Dataset close-draft captures refs verbatim so replay stays deterministic.
+- `chat-artifacts` — attach and receive artifacts inside a BO chat session. Two legs:
+  admin uploads a file, which is staged as a pending artifact on the session (listable and
+  removable) and claimed server-side into the next user turn — the turn body carries text
+  only; MCP tool result carrying inline `ImageContent` / `EmbeddedResource` is unpacked into
+  an `artifact_ref` content block on a `tool`-role message and recorded as a session
+  artifact. A `{store_id, uri}` the LLM writes into `tool_input` is opaque — the framework
+  never resolves it. There is **no** assistant-emission leg — the LLM does not itself
+  generate binary content; only tools return artifacts back to the assistant. Artifact refs
+  persist on `chat_messages.content` JSONB and the session's read scope in
+  `chat_session_artifacts`; bytes live in the env-configured default artifact store (see
+  `artifact-store-adapter`). Dataset close-draft captures refs verbatim (exported unchanged);
+  eval replay of artifact-bearing sessions is text-only until an artifact-aware replay
+  follow-up.
 
 **Under Evaluation:**
 - `eval-run` — kick off an eval (BO Evaluate button → PENDING row → `scripts/run_eval.sh`
@@ -117,24 +122,27 @@
 - `ag-ui-turn-streaming` — POST /turn → SSE event stream.
 - `mcp-tool-dispatch` — resolve endpoint→backend at runtime and dispatch tool calls to
   `tool_backends` (via the `http_endpoint` REST bridge OR the `mcp_client` MCP proxy).
-- `deployed-runtime-artifacts` — same three-leg pattern as `chat-artifacts` on the production
-  path (`deployed_sessions` + `deployed_messages`). End user uploads artifacts alongside a
-  user turn; MCP tool results carrying `ImageContent` / `EmbeddedResource` are unpacked into
-  `artifact_ref` content blocks; assistant references existing artifacts as `{store_id,
-  uri}` inner-refs when calling a tool. Tool-produced artifacts are surfaced to the
-  frontend through the AG-UI wire (event-type extension; see
+- `deployed-runtime-artifacts` — same two-leg pattern as `chat-artifacts` on the production
+  path (`deployed_sessions` + `deployed_messages` + `deployed_session_artifacts`). End user
+  uploads artifacts, which are staged as pending artifacts on the session (listable and
+  removable) and consumed by the next turn — the turn body carries text only; MCP tool
+  results carrying inline `ImageContent` / `EmbeddedResource` are unpacked into
+  `artifact_ref` content blocks and recorded as session artifacts. `{store_id, uri}`
+  pointers in tool input are opaque to the framework. Tool-produced artifacts are surfaced
+  to the frontend through the AG-UI wire (a `CUSTOM` `ARTIFACT_REF` event; see
   [`../ddd/contexts/deployed-runtime.md`](../ddd/contexts/deployed-runtime.md)). There is
   no assistant-emission leg. Access is session-scoped through the same trusted-`user_id`
-  model as messages.
+  model as messages, plus a session-artifact row for every read.
 
 - `sub-agent-dispatch` — runtime side of the agent tool, shared by BO chat and the deployed
   runtime (same `tools.Builder` path as `mcp-tool-dispatch`): create a child session, run
-  the pinned target version's turn loop with a fresh context, return final text +
-  `artifact_ref`s as the tool result. Enforces `AGENT_TOOL_MAX_DEPTH` and
-  `AGENT_TOOL_MAX_PARALLEL`; propagates `user_id`, artifact scope, and (BO / eval)
-  `header_overrides`; forwards sub-agent progress to the AG-UI stream as
-  `STEP_STARTED` / `STEP_FINISHED` + child-tagged `TOOL_CALL_*` (sub-agent text tokens are
-  not streamed).
+  the pinned target version's turn loop with a fresh context, return final text as the tool
+  result (text only — no artifacts in either direction). Enforces `AGENT_TOOL_MAX_DEPTH` and
+  `AGENT_TOOL_MAX_PARALLEL`; propagates `user_id` and (BO / eval) `header_overrides`; artifact
+  scope is per session (the child's tool-result artifacts stay on the child session and are
+  not visible to the root or the user); forwards sub-agent progress to the AG-UI stream as
+  `STEP_STARTED` / `STEP_FINISHED` + child-tagged `TOOL_CALL_*` (sub-agent text tokens and
+  child `ARTIFACT_REF`s are not streamed).
 
 **Under Batch drainer operations:**
 - `alpha-drainer` — `scripts/process_pending_alphas.sh` → `generate_alpha.sh` →
@@ -149,8 +157,11 @@
 
 **Under Artifact management:**
 - `artifact-store-adapter` — pluggable interface inside `open-bbcd` wrapping each artifact
-  store behind a `put(bytes, mime) → uri`, `get(uri) → bytes | signed_url`, `delete(uri)`,
-  `stat(uri)` contract. First shipped kind: `s3_compatible` (covers AWS S3, MinIO, GCS-HMAC,
+  store behind a `put(bytes, mime) → uri`, `get(uri) → bytes` / `sign(uri, ttl,
+  SignOptions{ContentType, ContentDisposition}) → signed_url` (response overrides; kinds that
+  cannot set them ignore them), `delete(uri)`, `stat(uri)` (also drives upload dedup and the
+  missing-blob render fallback) contract, plus a boot-time `probe()` that also fails boot if
+  a missing key is not reported as not-found. First shipped kind: `s3_compatible` (covers AWS S3, MinIO, GCS-HMAC,
   R2, B2, any S3-API endpoint). **Store registry is loaded at boot from env vars** —
   `ARTIFACT_STORE_<ID>_KIND` plus kind-specific config vars (e.g. `_ENDPOINT`, `_BUCKET`,
   `_ACCESS_KEY`, `_SECRET_KEY` for `s3_compatible`); `ARTIFACT_STORE_DEFAULT=<ID>`
@@ -160,7 +171,7 @@
   default. Uploads are bounded by `ARTIFACT_MAX_UPLOAD_MB` (see
   [`../constraints.md`](../constraints.md)).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, DESIGN.md § Flow, § Resources on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING state, 026 discovery_zip inline, alpha drainer + eval/training drainers as k8s CronJobs, mcp-over-rest-bridge L2 capability, flow-map schema v2). Updated 2026-09-28 for artifact-support — added chat-artifacts, deployed-runtime-artifacts, artifact-store-management, artifact-store-adapter. Updated 2026-09-30 for multiagent-tools — added agent-tool-configuration, sub-agent-dispatch; eval-scoring runs real topologies. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, DESIGN.md § Flow, § Resources on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING state, 026 discovery_zip inline, alpha drainer + eval/training drainers as k8s CronJobs, mcp-over-rest-bridge L2 capability, flow-map schema v2). Updated 2026-09-28 for artifact-support — added chat-artifacts, deployed-runtime-artifacts, artifact-store-management, artifact-store-adapter. Updated 2026-09-30 for multiagent-tools — added agent-tool-configuration, sub-agent-dispatch; eval-scoring runs real topologies. Updated 2026-10-01 for sync-deployed-runtime-artifacts — staged uploads + two-leg artifacts in chat-artifacts / deployed-runtime-artifacts, text-only sub-agent-dispatch, adapter SignOptions + missing-key probe. -->
 
 ## Capability → context/container map
 

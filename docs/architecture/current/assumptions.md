@@ -30,8 +30,13 @@
   where `seed_bundle.py` — packaged into the `aikdm-runner` image alongside `aikdm` — writes
   the resulting bundle directly to Postgres. `aikdm` itself remains DB-unaware; the runner
   image is not.
+- **Artifact-store credentials report a missing key as not-found.** The artifact framework
+  distinguishes a blob that is gone (`410` on retrieval, text surrogate on render) from a
+  transient store error by `Stat`, so the deployer's store credentials must let `Stat`
+  report a missing key as not-found (for AWS S3 this needs `s3:ListBucket`). Each store's
+  boot-time `probe()` checks it and fails boot otherwise.
 
-<!-- migrated from _migration-quarantine/DESIGN.md § Assumptions, § Out of Scope, ARCHITECTURE.md § System Overview, § MCP wiring on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING alpha + 026 discovery_zip + Helm chart + aikdm-runner image + published GHCR images) and flow-map-compiler skill LOCKED anti-goals. -->
+<!-- migrated from _migration-quarantine/DESIGN.md § Assumptions, § Out of Scope, ARCHITECTURE.md § System Overview, § MCP wiring on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING alpha + 026 discovery_zip + Helm chart + aikdm-runner image + published GHCR images) and flow-map-compiler skill LOCKED anti-goals. Updated 2026-10-01 for sync-deployed-runtime-artifacts — artifact-store missing-key assumption. -->
 
 ## Design decisions (locked)
 
@@ -72,14 +77,16 @@
   Deployment + Service + optional Ingress, optional in-cluster Postgres StatefulSet, and three
   CronJobs (alphas / evals / trainings) running the `aikdm-runner` image. Date: OpenBBC PR
   #50.
-- **Artifacts live in a pluggable artifact store; `open-bbcd` holds only refs.** Chat and
-  deployed-runtime file exchanges (any MIME, both directions, all three legs — user upload,
-  MCP tool output, agent-to-tool argument) flow through an
-  `artifact-store-adapter` to a deployer-configured Object store. **There is no
+- **Artifacts live in a pluggable artifact store; `open-bbcd` holds only refs and
+  per-session artifact metadata.** Chat and deployed-runtime file exchanges (any MIME, both
+  directions, both framework legs — staged user upload and MCP tool output) flow through an
+  `artifact-store-adapter` to a deployer-configured Object store. A `{store_id, uri}` the
+  LLM writes into tool input is opaque and never resolved by the framework. **There is no
   assistant-emission leg** — the LLM does not itself generate binary content (images, files);
-  only tools return artifacts back to the assistant. Bytes never enter
-  Postgres; `chat_messages.content` and `deployed_messages.content` JSONB carry typed
-  content blocks including `artifact_ref` pointers only. First shipped kind:
+  only tools return artifacts back to the assistant. With the artifact registry enabled,
+  bytes never enter Postgres; `chat_messages.content` and `deployed_messages.content` JSONB
+  carry typed content blocks including `artifact_ref` pointers only, and the per-session
+  read scope lives in `chat_session_artifacts` / `deployed_session_artifacts`. First shipped kind:
   `s3_compatible` (covers AWS S3, MinIO, GCS-HMAC, R2, B2, any S3-API endpoint).
   **Store registry is env-driven, not REST-driven** — deployers declare stores at boot via
   `ARTIFACT_STORE_<ID>_*` env vars and nominate a write target via
@@ -90,9 +97,11 @@
   keeps `open-bbcd`'s "no local disk state" invariant intact (Postgres bloat and media
   workloads don't mix); keeps blob-store credentials out of Postgres entirely (a stronger
   security posture than `tool_backends.config` — one fewer secret class in the DB); makes
-  install reproducible from a single env manifest (CI/CD / Helm-friendly); keeps eval
-  replay deterministic via the invariant "refs stay resolvable while any locked session
-  references them" (see [`ddd/contexts/artifacts.md`](ddd/contexts/artifacts.md)).
+  install reproducible from a single env manifest (CI/CD / Helm-friendly); keeps locked
+  sessions stable via the invariant "refs stay resolvable while any locked session
+  references them" (see [`ddd/contexts/artifacts.md`](ddd/contexts/artifacts.md)) — refs
+  are exported unchanged, while eval replay of artifact-bearing sessions is text-only until
+  an artifact-aware replay follow-up.
   Trade-off: adding or reconfiguring a store requires a redeploy — accepted because store
   changes are rare and refs remain resolvable across default flips. Date: 2026-09-28.
 - **Multi-agent = an in-process agent tool over pinned versions; no inter-agent protocol.**
@@ -101,8 +110,9 @@
   `target_version_id`, tool-facing `name`, prompt `note`). Calling it runs the target
   version's full turn loop — its own prompts, its own tool wiring, its own agent tool if
   enabled — inside `open-bbcd`, with a fresh context holding only the caller's `prompt`
-  (+ optional `artifact_ref`s). The caller gets back the sub-agent's final text + any
-  `artifact_ref`s as the tool result. Each spawn persists as a **child session** linked to
+  (text only). The caller gets back the sub-agent's final text as the tool result; no
+  artifacts cross the agent-tool boundary in either direction and artifact scope is per
+  session. Each spawn persists as a **child session** linked to
   its parent (`parent_session_id`, `parent_tool_call_id`). Config is **version-scoped on
   the caller** (the caller's prompt decides how the tool is used, so it varies per version
   like MCP attachments do) and **targets are pinned versions**, not agents, so BO chat,
@@ -114,7 +124,7 @@
   dependency for what is an in-process call. Trade-off: upgrading a worker requires a new
   caller version (pin bump) — accepted for reproducibility. Date: 2026-09-30.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. Updated 2026-10-01 for sync-deployed-runtime-artifacts — two artifact legs, per-session artifact tables, bytes rule scoped to an enabled registry, text-only eval replay, text-only agent tool. -->
 
 ## Open questions
 
