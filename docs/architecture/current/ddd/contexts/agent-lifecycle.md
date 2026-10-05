@@ -60,8 +60,13 @@ enumerates `GET /agent_versions.json?status=PENDING`).
   the same MCP with different `note` guidance).
 - **At most one DEPLOYED version per agent chain** (migration 011, DB-enforced singleton).
   Deploying a new version implicitly rotates the previous one.
-- **Version linked list is append-only** — `agents.parent_version_id` grows; versions are
-  never deleted.
+- **Version linked list grows by forking.** `agents.parent_version_id` links each new
+  version to its parent. Versions and agents can be deleted
+  (`POST /agent_versions/{version_id}/delete`, `POST /agents/{agent_id}/delete`). A delete is
+  refused with `409` when it would remove a sub-agent binding target, the pinned version of
+  a deployed child session, or a version with locked BO sessions pinned to it. An agent
+  delete ignores references from its own cascade set: its versions' bindings, its deployed
+  session trees, and BO session trees rooted on its versions.
 - **Version status state machine** (migration 025): `INITIALIZING → PENDING → READY` via the
   alpha drainer; `READY → TRAINING → READY` on hill-climb (transient); `READY → DEPLOYED` on
   deploy; `DEPLOYED → READY` on rotation. Wizard Finalize is the `INITIALIZING → PENDING`
@@ -70,12 +75,16 @@ enumerates `GET /agent_versions.json?status=PENDING`).
   Postgres transaction.
 - **Agent-tool config is version-scoped on the caller.** Different versions of the same
   agent may enable / disable the agent tool and bind different sub-agents, because the
-  version's prompt decides how the tool is used.
+  version's prompt decides how the tool is used. Config is writable only while the caller
+  is `INITIALIZING`/`DRAFT` (`409` otherwise). A fork (prompt save, land, training
+  complete) copies it onto the new version.
 - **Sub-agent targets are pinned versions.** `target_version_id` is never re-resolved at
   call time (no "follow DEPLOYED"); the target must be `READY` or `DEPLOYED` when the
   binding is saved.
-- **Agent topology is a DAG.** A binding that makes the caller reachable from the target
-  (including self-binding) is refused at save (repo layer). See
+- **Agent topology is a DAG.** It is acyclic by construction: only `INITIALIZING`/`DRAFT`
+  callers bind, only `READY`/`DEPLOYED` targets are bound, and status only moves forward. A
+  binding that would make the caller reachable from the target (including self-binding) is
+  also refused at save (repo layer), as defence in depth. See
   [`../../constraints.md`](../../constraints.md).
 - **New versions inherit agent-tool config verbatim.** When training (or any other path)
   materialises a new version from a parent, `agent_tool_enabled` and every
@@ -87,7 +96,7 @@ enumerates `GET /agent_versions.json?status=PENDING`).
   pattern needs a new kind + new migration. The agent tool is **not** a `tool_backends`
   kind — it is a built-in tool dispatched in-process against another agent version.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, DESIGN.md § Versioning, PRODUCTION.md § 2.1 Mark a version as deployed on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 status state machine). Updated 2026-09-30 for multiagent-tools — agent-tool invariants. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, DESIGN.md § Versioning, PRODUCTION.md § 2.1 Mark a version as deployed on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 status state machine). Updated 2026-09-30 for multiagent-tools — agent-tool invariants. Updated 2026-10-05 for sync-multiagent-feature — version/agent delete with 409 guards, config writable only on INITIALIZING/DRAFT, DAG acyclic by construction. -->
 
 ## Published surface
 
@@ -95,10 +104,18 @@ enumerates `GET /agent_versions.json?status=PENDING`).
   - `POST /agents/{agent_id}/deploy` / `POST /agents/{agent_id}/undeploy`
   - `GET/POST /mcp*` (`/mcp/new`, `/mcp/test`, `/mcp/{id}`, `/mcp/{id}/edit`, `/mcp/{id}/delete`)
   - `GET/POST /agents/{id}/configure/architecture/endpoints[/bulk|/{endpointID}/backend]`
-  - `GET/POST /agent_versions/{id}/configure/architecture/mcp` and per-attachment
-    `/toggle`, `/notes`
-  - `GET/POST /agent_versions/{id}/configure/agents` (agent-tool checkbox + sub-agent
-    binding list) and per-binding `/notes`, `/delete`
+  - `GET /agent_versions/{id}/configure/mcp`; writes
+    `POST /agent_versions/{id}/architecture/mcp/{backendID}/toggle` and bulk
+    `POST …/architecture/mcp/notes`
+  - `GET /agent_versions/{id}/configure/agents` — Agents tab (agent-tool checkbox, sub-agent
+    binding list, target picker over `READY`/`DEPLOYED` versions of any agent; read-only
+    outside `INITIALIZING`/`DRAFT`). Writes: `POST /agent_versions/{id}/architecture/agents/toggle`,
+    `POST …/architecture/agents` (add binding), bulk `POST …/architecture/agents/notes`,
+    `POST …/architecture/agents/{name}/delete`. They return HTML fragments: `409` when the
+    version is locked or on a name/target conflict, `400` when the target is not runnable or
+    a cycle would form.
+  - `POST /agent_versions/{version_id}/delete` and `POST /agents/{agent_id}/delete` — `409`
+    when a binding-target, deployed-child or locked-session reference would be removed.
 - **Backoffice UI routes:** `/agents/ui`, `/agents/new` (wizard, schema-driven from
   `web/schemas/wizard-v1.yaml`), `/agents/{agent_id}/configure/*`,
   `/agent_versions/{version_id}/configure/*`.
@@ -106,4 +123,4 @@ enumerates `GET /agent_versions.json?status=PENDING`).
   `bbc-discovery/flow-map-compiler/references/output-schemas.md`).
 - **Emitted contract:** aikdm `bundle.yaml` schema (`aikdm/schemas/prompt-v1.yaml`).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § MCP wiring, DESIGN.md § Phase I on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § MCP wiring, DESIGN.md § Phase I on 2026-09-28. Updated 2026-10-05 for sync-multiagent-feature — MCP and Agents-tab routes, version/agent delete. -->

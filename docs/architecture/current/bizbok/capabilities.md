@@ -76,8 +76,9 @@
 - `agent-tool-configuration` — per-version checkbox enabling the agent tool
   (`agent_versions.agent_tool_enabled`) plus the allow-list of sub-agent bindings
   (`agent_version_subagent`: pinned target version, tool-facing name, prompt note).
-  Bind-time checks: target is `READY` or `DEPLOYED`, and the binding keeps the topology a
-  DAG. Lets admins build planner → coordinator → worker topologies from ordinary agents.
+  Bind-time checks: the caller is `INITIALIZING` or `DRAFT` (config is frozen afterwards),
+  the target is `READY` or `DEPLOYED`, and the binding keeps the topology a DAG (by
+  construction, with a cycle check as defence in depth). Forks copy the config. Lets admins build planner → coordinator → worker topologies from ordinary agents.
 
 **Under Feedback & dataset curation:**
 - `backoffice-chat` — test any version in the BO chat (`/agent_versions/{id}/chat`), capture
@@ -135,14 +136,15 @@
   model as messages, plus a session-artifact row for every read.
 
 - `sub-agent-dispatch` — runtime side of the agent tool, shared by BO chat and the deployed
-  runtime (same `tools.Builder` path as `mcp-tool-dispatch`): create a child session, run
+  runtime (owned by the orchestrator, alongside the `tools.Builder` tool set used by `mcp-tool-dispatch`): create a child session, run
   the pinned target version's turn loop with a fresh context, return final text as the tool
   result (text only — no artifacts in either direction). Enforces `AGENT_TOOL_MAX_DEPTH` and
-  `AGENT_TOOL_MAX_PARALLEL`; propagates `user_id` and (BO / eval) `header_overrides`; artifact
+  `AGENT_TOOL_MAX_PARALLEL`; propagates the root's `user_id` and `agent_id` (deployed) and (BO / eval) `header_overrides`; artifact
   scope is per session (the child's tool-result artifacts stay on the child session and are
   not visible to the root or the user); forwards sub-agent progress to the AG-UI stream as
-  `STEP_STARTED` / `STEP_FINISHED` + child-tagged `TOOL_CALL_*` (sub-agent text tokens and
-  child `ARTIFACT_REF`s are not streamed).
+  `STEP_STARTED` / `STEP_FINISHED` + child-tagged `TOOL_CALL_*` / `TOOL_CALL_RESULT`
+  (sub-agent text tokens and child `ARTIFACT_REF`s are not streamed); children are readable
+  only through the root-scoped child-transcript routes.
 
 **Under Batch drainer operations:**
 - `alpha-drainer` — `scripts/process_pending_alphas.sh` → `generate_alpha.sh` →
@@ -171,7 +173,7 @@
   default. Uploads are bounded by `ARTIFACT_MAX_UPLOAD_MB` (see
   [`../constraints.md`](../constraints.md)).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, DESIGN.md § Flow, § Resources on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING state, 026 discovery_zip inline, alpha drainer + eval/training drainers as k8s CronJobs, mcp-over-rest-bridge L2 capability, flow-map schema v2). Updated 2026-09-28 for artifact-support — added chat-artifacts, deployed-runtime-artifacts, artifact-store-management, artifact-store-adapter. Updated 2026-09-30 for multiagent-tools — added agent-tool-configuration, sub-agent-dispatch; eval-scoring runs real topologies. Updated 2026-10-01 for sync-deployed-runtime-artifacts — staged uploads + two-leg artifacts in chat-artifacts / deployed-runtime-artifacts, text-only sub-agent-dispatch, adapter SignOptions + missing-key probe. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, DESIGN.md § Flow, § Resources on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING state, 026 discovery_zip inline, alpha drainer + eval/training drainers as k8s CronJobs, mcp-over-rest-bridge L2 capability, flow-map schema v2). Updated 2026-09-28 for artifact-support — added chat-artifacts, deployed-runtime-artifacts, artifact-store-management, artifact-store-adapter. Updated 2026-09-30 for multiagent-tools — added agent-tool-configuration, sub-agent-dispatch; eval-scoring runs real topologies. Updated 2026-10-01 for sync-deployed-runtime-artifacts — staged uploads + two-leg artifacts in chat-artifacts / deployed-runtime-artifacts, text-only sub-agent-dispatch, adapter SignOptions + missing-key probe. Updated 2026-10-05 for sync-multiagent-feature — agent-tool config frozen outside INITIALIZING/DRAFT, orchestrator-owned sub-agent-dispatch, root agent_id propagation, TOOL_CALL_RESULT forwarding. -->
 
 ## Capability → context/container map
 

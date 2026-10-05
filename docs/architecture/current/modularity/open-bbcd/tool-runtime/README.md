@@ -35,6 +35,8 @@ Implements the `mcp-tool-dispatch` and `mcp-over-rest-bridge` L2 capabilities in
 `bizbok/capabilities.md`. Header-override merging (from
 [`feedback-datasets`](../feedback-datasets/README.md) chat sessions and eval runs) happens
 in this layer at dispatch time; the deployed-runtime path passes only static
-server-to-server credentials on `tool_backends.config`.
+server-to-server credentials on `tool_backends.config`. The built-in `agent` tool is not
+built or dispatched here. The orchestrator adds it to the tool set and runs `agent` calls
+itself, never through this layer's call path.
 
 ## Scope (in / out)

@@ -97,17 +97,20 @@ object-store logs.
 its caller's — a caller can therefore reach backends it is not itself wired to, through a
 worker that is. This is the intended encapsulation (admins compose topologies
 deliberately in the BO), and it is why bindings are admin-only configuration. What a
-sub-agent **inherits** from the root session: `user_id` (child sessions are scoped to the
-root's user; child reads 404 on mismatch like any session) and — on BO chat and eval paths —
+sub-agent **inherits** from the root session: on the deployed path, the root's `user_id` and
+`agent_id` (the child stays in the root's partition; it is readable only through the
+root-scoped child-transcript route, and every other per-session route returns `404` for it)
+and — on BO chat and eval paths —
 `header_overrides` for any backend id the sub-agent also calls. Artifact scope is **not**
 inherited in either direction: each session has its own artifact rows, a child's
 tool-result artifacts are not visible to the root or the user, child `ARTIFACT_REF`s are not
 forwarded, and child sessions are not addressable by artifact routes (404). The deployed path still
 carries no header overrides, so sub-agents there use static `tool_backends.config`
 credentials only. A sub-agent never sees the parent's transcript — only the text `prompt` the caller
-passed.
+passed. The worker's tool calls and their results are forwarded, tagged, on the root's
+stream, so end users see worker tool output but never worker reasoning tokens.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model on 2026-09-28. Updated 2026-09-28 for artifact-support — added artifact-store credentials + ref-access model. Updated 2026-09-30 for multiagent-tools — added sub-agent trust model. Updated 2026-10-01 for sync-deployed-runtime-artifacts — nested row-authorised retrieval, staged uploads, MIME resolution + nosniff; per-session artifact scope for sub-agents. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model on 2026-09-28. Updated 2026-09-28 for artifact-support — added artifact-store credentials + ref-access model. Updated 2026-09-30 for multiagent-tools — added sub-agent trust model. Updated 2026-10-01 for sync-deployed-runtime-artifacts — nested row-authorised retrieval, staged uploads, MIME resolution + nosniff; per-session artifact scope for sub-agents. Updated 2026-10-05 for sync-multiagent-feature — child carries root user_id and agent_id, root-scoped child-transcript route, worker tool calls and results forwarded tagged. -->
 
 ## Compliance
 

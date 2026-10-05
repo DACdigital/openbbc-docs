@@ -13,7 +13,8 @@ Backoffice test-chat surface (`/agent_versions/{v}/chat`), per-assistant-message
 capture, and versioned dataset lifecycle (DRAFT / CLOSED with cumulative seeding).
 
 Owns tables: `chat_sessions` (+ `backend_header_overrides` JSONB per migration 016,
-`locked_at` flip on dataset close), `chat_messages` (typed content-block JSONB — `text` +
+`locked_at` flip on dataset close, + `parent_session_id` / `parent_tool_call_id` / `depth`
+for child sessions), `chat_messages` (typed content-block JSONB — `text` +
 `artifact_ref` blocks post artifact-support), `chat_session_artifacts` (migration 027;
 `session_id → chat_sessions(id) ON DELETE CASCADE`; one row per artifact in a session's read
 scope, origin `upload` | `tool_result`, `message_id NULL` = pending), `chat_message_feedback` (+ `judge_criteria`
@@ -26,11 +27,13 @@ modal, assign-dataset; the session-scoped artifact routes — upload
 `GET …/chat/{s}/artifacts/{store_id}/{uri...}` authorised by a `chat_session_artifacts` row,
 `GET` / `DELETE …/chat/{s}/pending-artifacts[/{id}]` — with a locked session → `409` on
 upload and remove; the chat view renders pending artifacts), `/datasets/*` (create, list, detail, `/close-draft`,
-`/close-draft/confirm`).
+`/close-draft/confirm`), the read-only child transcript `GET …/chat/{s}/children/{child_id}`;
+every per-session route resolves root sessions only (a child id returns `404`).
 
 Invariants enforced here (repo layer, not schema): feedback attaches only to
 assistant-role messages; a session belongs to at most one dataset; close-draft refuses when
-any member session has an empty `judge_criteria` list.
+any member session has an empty `judge_criteria` list; close-draft locks each member root
+and its descendants; no child is created under a locked root.
 
 Implements the [`feedback-datasets`](../../../ddd/contexts/feedback-datasets.md) DDD
 context. Consumes the `artifact_ref` content-block shape published by the

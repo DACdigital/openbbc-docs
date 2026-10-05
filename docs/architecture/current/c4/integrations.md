@@ -15,14 +15,26 @@
 ## Contracts
 
 - **AG-UI event stream (client frontend ↔ open-bbcd).** Event types: `RUN_STARTED`,
-  `TEXT_MESSAGE_START/CONTENT/END`, `TOOL_CALL_START/ARGS/END`, `STEP_STARTED/FINISHED`,
-  `TURN_END`, `ERROR`. Upstream spec: [ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui).
-  **Sub-agent progress** uses the standard AG-UI step events: `STEP_STARTED` /
-  `STEP_FINISHED` bracket each sub-agent run (step name = sub-agent binding `name`), and
-  the sub-agent's own `TOOL_CALL_*` events are forwarded carrying an extra
-  `child_session_id` field. Sub-agent `TEXT_MESSAGE_*` are not forwarded; the root's
-  `TOOL_CALL_END` for the `agent` tool carries the result. SDKs that ignore steps or the
-  extra field still render a correct root-level conversation. Tool-result artifact refs are
+  `TEXT_MESSAGE_START/CONTENT/END`, `TOOL_CALL_START/ARGS/END`, `TOOL_CALL_RESULT`,
+  `STEP_STARTED/FINISHED`, `RUN_FINISHED`, `RUN_ERROR`, and `CUSTOM` (`ARTIFACT_REF`).
+  Upstream spec: [ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui).
+  **Sub-agent progress** uses the standard AG-UI step events. `STEP_STARTED` /
+  `STEP_FINISHED` bracket each sub-agent run with
+  `stepName = "<binding name>:<toolCallId of the parent's agent call>"`, which is unique
+  across parallel calls to the same binding. Their `rawEvent` is
+  `{childSessionId, parentToolCallId, description}` on start and `{childSessionId, isError}`
+  on finish; nested steps attach to the step whose `toolCallId` equals
+  `rawEvent.parentToolCallId`. The sub-agent's own `TOOL_CALL_START/ARGS/END/RESULT` events
+  are forwarded with `toolCallId = "<childSessionId>:<tool_use id>"` (prefixed exactly once
+  at any depth) and `rawEvent = {childSessionId}`. Sub-agent run, `TEXT_MESSAGE_*`, error
+  and `ARTIFACT_REF` events are not forwarded. For each `agent` call the root stream
+  carries, in order: the root's `TOOL_CALL_START/ARGS/END`, `STEP_STARTED`, the child's
+  tagged events, `STEP_FINISHED`, then the root's `TOOL_CALL_RESULT` carrying the
+  sub-agent's text. The stream has exactly one `RUN_STARTED` and one `RUN_FINISHED`.
+  Streams of versions without the agent tool are unchanged. SDKs that ignore steps and
+  `rawEvent` still render the root's text and tool calls correctly, but also show the
+  worker's tool calls as extra top-level tool calls (each id is uniquely prefixed, so
+  nothing collides). Tool-result artifact refs are
   carried as the `CUSTOM` `ARTIFACT_REF` event (below); the BO chat stream emits them with
   the same semantics on both its transports (an `artifact_ref` frame on JSONL, the `CUSTOM`
   event on AG-UI).
@@ -49,11 +61,20 @@
   bundle, tool wiring, and own bindings — transitive, so aikdm needs no further lookups.
   The bundle schema (`prompt-v1.yaml`) itself is unchanged.
 - **Agent tool (open-bbcd / aikdm ↔ LLM).** Built-in tool definition presented to the LLM
-  when `agent_tool_enabled`: `agent(subagent: enum<binding name>, description: string,
-  prompt: string)` → `text`. The tool carries text only — no artifacts argument and no refs
-  in its result; artifact scope is per session. The
-  tool description renders each binding's `name` + `note`. Same definition in `open-bbcd`
-  and `aikdm` so evals exercise the production contract.
+  when the version has `agent_tool_enabled` **and at least one binding**, placed
+  immediately after `Skill`: `agent(subagent: enum<binding name>, description: string,
+  prompt: string)` → `text`. All three properties are required and no others are allowed.
+  The tool carries text only: no artifacts argument and no refs in its result; artifact
+  scope is per session. The tool description renders each binding's `name` + `note`. On
+  success, `tool_result` content is the concatenated `text` blocks of the sub-agent's last
+  assistant message, with `is_error: false` and no ids or envelope. On error it is
+  `is_error: true` with content `"<code>: <details>"`, where code is one of
+  `max_depth_exceeded`, `unknown_subagent`, `invalid_input`, `session_locked`,
+  `subagent_max_tool_rounds`, `subagent_failed` or `cancelled`. Errors go back to the
+  calling LLM and never fail the turn. Endpoint tools are not prefixed, so enabling the tool
+  or adding a binding is refused with `409` when the agent has an endpoint whose sanitised
+  tool name is `agent`. The same definition is used in `open-bbcd` and `aikdm`, so evals
+  exercise the production contract.
 - **Drainer discovery.** `GET /agent_versions.json?status=PENDING`,
   `GET /evals.json?status=PENDING`, `GET /training-sessions.json?status=PENDING` — the three
   JSON list surfaces the k8s CronJobs and one-shot scripts use to enumerate PENDING work.
@@ -105,4 +126,4 @@
   deployed surface). The `value` payload changes only additively. Upstream AG-UI spec:
   [ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § flow-map-compiler, § aikdm, § MCP wiring, § Protocols, PRODUCTION.md § 2, § 3 MCP layer, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — explicit bridge-vs-proxy contract, flow-map schema v2, drainer JSON surfaces. Updated 2026-09-28 for artifact-support — artifact-store adapter interface + AG-UI ARTIFACT_REF event extension. Updated 2026-09-30 for multiagent-tools — AG-UI step events for sub-agent progress, eval-input subagents section, agent tool contract. Updated 2026-10-01 for sync-deployed-runtime-artifacts — ARTIFACT_REF as AG-UI CUSTOM event, BO stream artifact refs, text-only agent tool, adapter SignOptions + missing-key probe. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § flow-map-compiler, § aikdm, § MCP wiring, § Protocols, PRODUCTION.md § 2, § 3 MCP layer, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — explicit bridge-vs-proxy contract, flow-map schema v2, drainer JSON surfaces. Updated 2026-09-28 for artifact-support — artifact-store adapter interface + AG-UI ARTIFACT_REF event extension. Updated 2026-09-30 for multiagent-tools — AG-UI step events for sub-agent progress, eval-input subagents section, agent tool contract. Updated 2026-10-01 for sync-deployed-runtime-artifacts — ARTIFACT_REF as AG-UI CUSTOM event, BO stream artifact refs, text-only agent tool, adapter SignOptions + missing-key probe. Updated 2026-10-05 for sync-multiagent-feature — AG-UI stepName/rawEvent/prefixed child toolCallId, RUN_FINISHED/RUN_ERROR, agent tool result and error contract. -->

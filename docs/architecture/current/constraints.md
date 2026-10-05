@@ -17,7 +17,7 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
 ## Hard technical limits
 
 - **Postgres 15+ required.** `goose` migrations embedded (`//go:embed`), currently at
-  `028_deployed_session_artifacts`.
+  `029_agent_tool`.
 - **Go 1.22+, `database/sql` + `lib/pq`.** Runtime image is
   `gcr.io/distroless/static-debian12:nonroot`, CGO off.
 - **Python 3.12+ for `aikdm`, managed with `uv`.** Multi-provider LLM via Google ADK +
@@ -49,23 +49,28 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
   Every operator must front it with a gateway; direct exposure is unsafe.
 - **`deployed_sessions` cannot carry per-session header overrides today** — only chat and eval
   paths do.
-- **`AGENT_TOOL_MAX_DEPTH` (optional, default `3`) caps sub-agent nesting.** The root
+- **`AGENT_TOOL_MAX_DEPTH` (optional, default `3`, integer ≥ 1; any other value fails boot) caps sub-agent nesting.** The root
   session is depth `0`; an `agent` tool call from a session at depth `AGENT_TOOL_MAX_DEPTH`
   is refused with a tool error returned to the calling LLM (not a turn failure). Applies
   identically in `open-bbcd` (BO chat, deployed runtime) and in `aikdm evaluate` /
   `train-agent`, which read the value from `eval-input.yaml`.
-- **`AGENT_TOOL_MAX_PARALLEL` (optional, default `4`) caps concurrent sub-agent runs per
+- **`AGENT_TOOL_MAX_PARALLEL` (optional, default `4`, integer ≥ 1; any other value fails boot) caps concurrent sub-agent runs per
   assistant step.** When one assistant message issues several `agent` tool calls, up to
   this many run concurrently; the rest queue. Counted per session node, not globally.
-- **Agent-tool topology is a DAG over pinned versions.** Saving an `agent_version_subagent`
-  row that would make the caller reachable from its target (including a version listing
-  itself) is refused at the repo layer. Because targets are pinned `agent_version_id`s the
-  graph is static; training's verbatim copy onto a new version cannot introduce a cycle
-  (the new version has no incoming edges).
+- **Agent-tool topology is a DAG over pinned versions, acyclic by construction.** Only an
+  `INITIALIZING` / `DRAFT` caller can save agent-tool config, and only a `READY` /
+  `DEPLOYED` target can be bound. Since status only moves forward, a caller never has
+  incoming edges. A binding that would make the caller reachable from its target (including
+  self-binding) is also refused at the repo layer, as defence in depth. Because targets are
+  pinned `agent_version_id`s, the graph is static. A version forked from a caller (prompt
+  save, land, training complete) copies its config but has no incoming edges, so it cannot
+  introduce a cycle.
 - **Sub-agent targets must be `READY` or `DEPLOYED` at bind time.** `INITIALIZING`,
   `PENDING`, `DRAFT`, and `TRAINING` versions cannot be bound. A target does **not** need
   to be `DEPLOYED` — workers may never be user-facing. The pinned id is never re-resolved
-  at call time.
+  at call time. Agent-tool config (the checkbox and every binding) is writable only while
+  the caller version is `INITIALIZING` or `DRAFT`. On any later status it is frozen and
+  writes return `409`.
 - **`ARTIFACT_MAX_UPLOAD_MB` env var caps per-artifact upload size.** No default is shipped
   — deployers set this explicitly at install time (rationale: any single default would be
   wrong for either text-heavy or media-heavy deployments). Enforced at the upload boundary
@@ -105,4 +110,4 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
   minutes) balances CDN-cacheable link lifetime against replay risk. Ignored by adapters
   whose `PreferredDelivery()` is `Bytes` (proxied read).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. Updated 2026-09-30 for multiagent-tools — added AGENT_TOOL_MAX_DEPTH, AGENT_TOOL_MAX_PARALLEL, DAG topology rule, target-status rule. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028, nested upload paths, ARTIFACT_MAX_PENDING, bytes rule scoped to an enabled registry. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. Updated 2026-09-30 for multiagent-tools — added AGENT_TOOL_MAX_DEPTH, AGENT_TOOL_MAX_PARALLEL, DAG topology rule, target-status rule. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028, nested upload paths, ARTIFACT_MAX_PENDING, bytes rule scoped to an enabled registry. Updated 2026-10-05 for sync-multiagent-feature — migration head 029, AGENT_TOOL_MAX_* validation, DAG acyclic by construction, config frozen outside INITIALIZING/DRAFT. -->

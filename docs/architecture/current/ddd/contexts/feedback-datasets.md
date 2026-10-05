@@ -14,8 +14,9 @@ tested) and upstream of `evaluation` (which scores against a CLOSED dataset vers
 - **Child chat session** (entity within the root Chat session's tree) — a `chat_sessions`
   row created by the agent tool for one sub-agent run: `parent_session_id`,
   `parent_tool_call_id`, `depth` (root = 0), and the pinned target `agent_version_id`.
-  Same `chat_messages` shape as any session. Inherits the root's user and
-  `backend_header_overrides` (applied to any backend id the sub-agent calls). Does **not**
+  Same `chat_messages` shape as any session. Copies the root's `backend_header_overrides`
+  at creation (applied to any backend id the sub-agent calls). It is created with
+  `locked_at` NULL, and never under a locked root. Does **not**
   inherit artifact scope in either direction: the child has its own `chat_session_artifacts`
   rows (its tool results), visible to the child's LLM but not to the root or the user.
 - **Chat message** (entity within Chat session) — `chat_messages` row. Turns; role ∈
@@ -42,7 +43,7 @@ tested) and upstream of `evaluation` (which scores against a CLOSED dataset vers
   CLOSED}`, `version_num`, `close_note`.
 - **Dataset-version session join** (link entity) — `dataset_version_sessions` row.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § Feedback + datasets, § Chat header overrides on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — Chat session artifact entity; child sessions do not inherit artifact scope. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § Feedback + datasets, § Chat header overrides on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — Chat session artifact entity; child sessions do not inherit artifact scope. Updated 2026-10-05 for sync-multiagent-feature — child copies backend_header_overrides, created unlocked and never under a locked root. -->
 
 ## Domain events
 
@@ -50,8 +51,9 @@ N/A because OpenBBC does not emit domain events on any transport. State transiti
 this context are Postgres-only — `INSERT` / `UPDATE` against `chat_sessions`,
 `chat_messages`, `chat_session_artifacts`, `chat_message_feedback`, `datasets`, `dataset_versions`,
 `dataset_version_sessions` — and downstream consumers read via the REST surface. Draft
-close (`POST /datasets/{id}/close-draft/confirm`) writes `status=CLOSED`, flips
-`chat_sessions.locked_at`, and seeds the next DRAFT in a single transaction; there is no
+close (`POST /datasets/{dataset_id}/close-draft`; `GET …/close-draft/confirm` is the
+confirmation modal) writes `status=CLOSED`, flips `chat_sessions.locked_at` on the member
+roots and all their descendant child sessions, and seeds the next DRAFT in a single transaction; there is no
 event bus notification alongside.
 
 ## Invariants
@@ -69,10 +71,19 @@ event bus notification alongside.
 - **Feedback only attaches to assistant-role messages** — enforced at the repo layer (Postgres
   doesn't do partial FKs) via `chat_message_feedback`.
 - **Only root sessions are dataset members.** Child sessions cannot be assigned to a
-  dataset; `assign-dataset` on a child returns `409`.
+  dataset; `assign-dataset` (like every other per-session route) on a child id returns
+  `404`.
 - **Locking cascades to the session tree.** Closing a DRAFT flips `locked_at` on each member
-  root session **and** all its descendant child sessions, so their `artifact_ref`s stay
-  resolvable for retrieval.
+  root session **and** all its descendant child sessions. A child can never be created
+  under a locked root (the agent tool returns `session_locked`). So no unlocked child
+  remains under a locked root, and the whole tree stays a fixed snapshot.
+- **Per-session routes resolve root sessions only.** Every per-session BO route (chat view,
+  title, turn, headers, feedback, assign-dataset, and the artifact and pending-artifact
+  routes) returns `404` for a child id, with no side effect. Feedback routes also require
+  the message to belong to the path's root session. Child transcripts are read only through
+  `GET /agent_versions/{v}/chat/{s}/children/{child_id}`, which returns `404` unless `s` is
+  a root of `v` and `child_id` descends from `s`. Child `artifact_ref`s render there as
+  filename labels without links. The session list shows roots only.
 - **Feedback attaches to root-session assistant messages only.** Child transcripts are
   read-only in the BO (inspectable from the parent's tool call) — judge criteria describe
   the topology's user-visible behaviour, not individual workers.
@@ -90,13 +101,13 @@ event bus notification alongside.
   remain a fixed snapshot; accepting new bytes after close would silently mutate the
   exported session.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Feedback + datasets, DESIGN.md § Phase II on 2026-09-28. Updated 2026-09-30 for multiagent-tools — child-session invariants. Updated 2026-10-01 for sync-deployed-runtime-artifacts — text-only eval replay, nested upload path, locked-session 409 on pending remove. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Feedback + datasets, DESIGN.md § Phase II on 2026-09-28. Updated 2026-09-30 for multiagent-tools — child-session invariants. Updated 2026-10-01 for sync-deployed-runtime-artifacts — text-only eval replay, nested upload path, locked-session 409 on pending remove. Updated 2026-10-05 for sync-multiagent-feature — child id 404 on per-session routes, lock cascade with no child under a locked root, close-draft route. -->
 
 ## Published surface
 
 - **REST / UI:**
-  - `GET/POST /datasets`, `/datasets/{id}`, `/datasets/{id}/close-draft`,
-    `/datasets/{id}/close-draft/confirm`
+  - `GET/POST /datasets`, `/datasets/{id}`, `POST /datasets/{id}/close-draft` (mutation),
+    `GET /datasets/{id}/close-draft/confirm` (confirmation modal)
   - `POST /agent_versions/{v}/chat/{s}/assign-dataset`
   - `GET/POST /agent_versions/{v}/chat/{s}/headers` (header-override modal)
   - `GET /agent_versions/{id}/chat` and turn-level POSTs —
@@ -124,4 +135,4 @@ event bus notification alongside.
 - **Emitted contract for `evaluation`:** CLOSED `dataset_version_id` + its
   `chat_sessions[]` with locked-at + feedback rows including `judge_criteria`.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § Feedback + datasets, § Chat header overrides on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — BO artifact + pending-artifacts routes, empty-turn rule, artifact refs on the BO stream. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Backoffice UI, § REST API, § Feedback + datasets, § Chat header overrides on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — BO artifact + pending-artifacts routes, empty-turn rule, artifact refs on the BO stream. Updated 2026-10-05 for sync-multiagent-feature — close-draft mutation vs confirmation modal. -->

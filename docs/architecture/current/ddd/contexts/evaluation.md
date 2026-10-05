@@ -58,11 +58,15 @@ its Train gate opens).
   - `POST /evals` (create; typically from BO Evaluate button)
   - `GET /evals`, `GET /evals/{id}`, `GET /evals.json?status=PENDING` (used by cron)
   - `GET /evals/{id}/export.yaml` (script fetch; carries a `subagents` section with the
-    transitive pinned bundles + `agent_tool` caps)
+    transitive pinned bundles + `agent_tool` caps). While multi-agent eval is unsupported,
+    export for a version with the agent tool enabled returns `409`. Before returning, it
+    moves a `PENDING` eval, and any `PENDING` training session sourced from it, to `FAILED`.
+    This is a one-shot fail-forward for drainers, which export before `/start`; a retry only
+    returns `409` again.
   - `POST /evals/{id}/start`, `/result`, `/fail`
 - **UI:** `/evals`, `/agent_versions/{id}/evals`, eval detail page (renders per-session
   breakdown, exposes the Train button when gate passes).
 - **Emitted contract for `training`:** DONE eval with `score`, `agent_version_id`,
   `dataset_version_id`.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § REST API, § Evals, DESIGN.md § Phase III, § Phase IV on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § REST API, § Evals, DESIGN.md § Phase III, § Phase IV on 2026-09-28. Updated 2026-10-05 for sync-multiagent-feature — export.yaml 409 fail-forward for agent-tool versions. -->
