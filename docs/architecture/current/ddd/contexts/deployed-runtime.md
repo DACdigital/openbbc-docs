@@ -12,10 +12,13 @@ sessions are scoped by an opaque, gateway-verified `user_id`. Downstream of `age
   user_id)`. Fields: `id`, `agent_id`, `user_id`, `title`, timestamps. **Does not** carry
   `header_overrides` today.
 - **Child deployed session** (entity within the root Deployed session's tree) — a
-  `deployed_sessions` row created by the agent tool for one sub-agent run:
-  `parent_session_id`, `parent_tool_call_id`, `depth`, pinned target `agent_version_id`,
-  and the root's `user_id`. The target version need not be the DEPLOYED one — it is
-  whatever the root version's binding pins.
+  `deployed_sessions` row created by the agent tool for one sub-agent run. It holds
+  `parent_session_id`, `parent_tool_call_id`, `depth`, the pinned target
+  `agent_version_id`, and the **root's** `agent_id` and `user_id`. So a whole tree stays
+  inside the root agent's partition: deleting the root's agent cascades the tree, and
+  deleting a worker agent that a child pins is refused with `409`. The target version need
+  not be the DEPLOYED one; it is whatever the binding pins. Root sessions keep
+  `agent_version_id` NULL and resolve the DEPLOYED version on each turn.
 - **Deployed message** (entity within Deployed session) — `deployed_messages` row. Turns;
   streamed over AG-UI Server-Sent Events. `content` is a typed content-block list (JSONB)
   matching `chat_messages.content`: `text` blocks + `artifact_ref` blocks. Refs point at
@@ -30,7 +33,7 @@ sessions are scoped by an opaque, gateway-verified `user_id`. Downstream of `age
   pending row per blob per session (an identical upload while pending returns the existing
   row). Each child deployed session has its own rows — no inheritance with its root.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Agent Runtime, PRODUCTION.md § 2 Integrating your frontend on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — Deployed session artifact entity. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Agent Runtime, PRODUCTION.md § 2 Integrating your frontend on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — Deployed session artifact entity. Updated 2026-10-05 for sync-multiagent-feature — child session carries the root's agent_id, root sessions keep agent_version_id NULL. -->
 
 ## Domain events
 
@@ -40,8 +43,8 @@ this context are Postgres-only — `INSERT` against `deployed_sessions` (root an
 `UPDATE`), `DELETE` cascades on session teardown — and downstream consumers do
 not exist beyond the end user (who reads via the AG-UI SSE stream, a transport-layer
 protocol, not a domain-event bus). The AG-UI wire chunks (`RUN_STARTED`,
-`TEXT_MESSAGE_START` / `CONTENT` / `END`, `TOOL_CALL_START` / `ARGS` / `END`, `TURN_END`,
-`ERROR`) are message-framing over the response, not events another bounded context
+`TEXT_MESSAGE_START` / `CONTENT` / `END`, `TOOL_CALL_START` / `ARGS` / `END` / `RESULT`,
+`STEP_STARTED` / `STEP_FINISHED`, `RUN_FINISHED`, `RUN_ERROR`) are message-framing over the response, not events another bounded context
 subscribes to.
 
 ## Invariants
@@ -56,15 +59,24 @@ subscribes to.
   removes all associated `deployed_messages`.
 - **One agent deployed per chain** (migration 011) — enforced by `agent-lifecycle`; this
   context sees only the currently-DEPLOYED version.
-- **Child sessions are invisible to the session list.** `GET /deployed/{agent_id}/sessions`
-  returns root sessions only; children are reachable through their root and 404 on
-  `user_id` mismatch like any session. `DELETE` of a root cascades its whole tree.
+- **Child sessions are invisible to every per-session route.**
+  `GET /deployed/{agent_id}/sessions` lists root sessions only. Every per-session route
+  (`GET` / `DELETE …/sessions/{id}`, `PATCH …/title`, `POST …/turn`, and all artifact and
+  pending-artifact routes) resolves root sessions only. A child id returns `404`,
+  indistinguishable from an unknown id, with no side effect. Children are read only through
+  `GET …/sessions/{root_id}/children/{child_id}?user_id=X`, which requires the root
+  preamble (`user_id` and agent match on a root) and that `child_id` descends from
+  `root_id`. `DELETE` of a root cascades its whole tree, including messages and
+  session-artifact rows.
 - **Sub-agent progress, not sub-agent tokens, on the wire.** While a sub-agent runs, the
-  root stream emits `STEP_STARTED` / `STEP_FINISHED` (step name = binding `name`) and the
-  sub-agent's `TOOL_CALL_*` events tagged with `child_session_id`; sub-agent
-  `TEXT_MESSAGE_*` are not forwarded, and neither is `ARTIFACT_REF` for the sub-agent's tool
-  results (the child's refs are not readable by the root's user). The caller's
-  `TOOL_CALL_END` for the `agent` tool carries the final result (text only).
+  root stream emits `STEP_STARTED` / `STEP_FINISHED` with
+  `stepName = "<binding name>:<parent agent toolCallId>"`, plus the sub-agent's
+  `TOOL_CALL_*` and `TOOL_CALL_RESULT` events with a `"<childSessionId>:"`-prefixed
+  `toolCallId` and `rawEvent.childSessionId`. Sub-agent `TEXT_MESSAGE_*`, run and error
+  events are not forwarded. Neither is `ARTIFACT_REF` for the sub-agent's tool results,
+  because the child's refs are not readable by the root's user. The caller's
+  `TOOL_CALL_RESULT` for the `agent` tool carries the final result (text only). The stream
+  has one `RUN_STARTED` and one `RUN_FINISHED`.
 - **Depth and parallelism caps** (`AGENT_TOOL_MAX_DEPTH`, `AGENT_TOOL_MAX_PARALLEL`) apply
   on the deployed path exactly as on BO chat — see [`../../constraints.md`](../../constraints.md).
 - **No per-session header overrides on outbound MCP calls today** — the deployed runtime
@@ -86,7 +98,8 @@ subscribes to.
   `origin = tool_result` rows in the same transaction as their tool-role message, so a ref is
   never in history without a row.
 - **AG-UI `CUSTOM` event for outbound artifact streaming.** Existing wire events
-  (`RUN_STARTED`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`, `TURN_END`, `ERROR`) do not carry
+  (`RUN_STARTED`, `TEXT_MESSAGE_*`, `TOOL_CALL_START` / `ARGS` / `END` / `RESULT`,
+  `STEP_STARTED` / `STEP_FINISHED`, `RUN_FINISHED`, `RUN_ERROR`) do not carry
   binary/file payloads; tool-produced artifacts (from `ImageContent` / `EmbeddedResource`
   normalisation on the tool-result path) stream as an AG-UI `CUSTOM` event with
   `name: "ARTIFACT_REF"` and `value {toolCallId, storeId, uri, mime, sizeBytes, sha256,
@@ -101,16 +114,22 @@ subscribes to.
   is no assistant-emission leg. Upstream AG-UI spec is versioned separately — see
   [`../../c4/integrations.md § Contracts`](../../c4/integrations.md#contracts).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model, ARCHITECTURE.md § Agent Runtime on 2026-09-28. Updated 2026-09-30 for multiagent-tools — child sessions, STEP_* progress, caps. Updated 2026-10-01 for sync-deployed-runtime-artifacts — nested retrieval route + row allow-list, staged uploads, ARTIFACT_REF as AG-UI CUSTOM event, child refs not forwarded. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model, ARCHITECTURE.md § Agent Runtime on 2026-09-28. Updated 2026-09-30 for multiagent-tools — child sessions, STEP_* progress, caps. Updated 2026-10-01 for sync-deployed-runtime-artifacts — nested retrieval route + row allow-list, staged uploads, ARTIFACT_REF as AG-UI CUSTOM event, child refs not forwarded. Updated 2026-10-05 for sync-multiagent-feature — children invisible to every per-session route, stepName/prefixed toolCallId, RUN_FINISHED/RUN_ERROR. -->
 
 ## Published surface
 
-- **REST (AG-UI-facing):**
+- **REST (AG-UI-facing):** Every per-session route below resolves root sessions only (a
+  child id returns `404`).
   - `POST /deployed/{agent_id}/sessions`
   - `GET /deployed/{agent_id}/sessions?user_id=X`
   - `GET /deployed/{agent_id}/sessions/{id}?user_id=X`
   - `PATCH /deployed/{agent_id}/sessions/{id}/title`
   - `DELETE /deployed/{agent_id}/sessions/{id}?user_id=X`
+  - `GET /deployed/{agent_id}/sessions/{root_id}/children/{child_id}?user_id=X` — read-only
+    child transcript. It returns the same JSON as the session read, plus
+    `parent_session_id`, `parent_tool_call_id`, `depth` and `agent_version_id`. It returns
+    `404` unless `root_id` passes the deployed preamble as a root and `child_id` descends
+    from it. Child `artifact_ref` blocks are returned as data; no artifact route serves them.
   - `POST /deployed/{agent_id}/sessions/{session_id}/turn?user_id=X` (streams AG-UI SSE)
     — reads only `text` blocks (client `artifact_ref` blocks are ignored) and claims the
     session's pending artifacts; no non-empty text and nothing pending → `400` (`empty_turn`);
@@ -132,8 +151,11 @@ subscribes to.
     - `DELETE /deployed/{agent_id}/sessions/{session_id}/pending-artifacts/{id}?user_id=X` —
       remove one pending artifact before the next turn (`204`; `404` if no such row in this
       session; `409` if the row is already consumed). Deletes the row only, not the blob.
-- **Emitted contract:** AG-UI event stream (`RUN_STARTED`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`,
-  `STEP_STARTED` / `STEP_FINISHED` for sub-agent progress, `TURN_END`, `ERROR`, and
+- **Emitted contract:** AG-UI event stream (`RUN_STARTED`, `TEXT_MESSAGE_*`,
+  `TOOL_CALL_START` / `ARGS` / `END` / `RESULT`, `STEP_STARTED` / `STEP_FINISHED` for
+  sub-agent progress (see [`../../c4/integrations.md § Contracts`](../../c4/integrations.md#contracts)
+  for `stepName`, the `rawEvent` fields and the prefixed child `toolCallId`), `RUN_FINISHED`,
+  `RUN_ERROR`, and
   `CUSTOM` with `name: "ARTIFACT_REF"` for tool-result artifact refs) — any AG-UI SDK accepts
   the `CUSTOM` event; clients that do not handle `ARTIFACT_REF` can ignore it and fall back
   to text-only rendering, and those that do resolve the ref against the nested retrieval
@@ -142,4 +164,4 @@ subscribes to.
   dispatched by `internal/llm/tools.Builder` via `toolBackendStoreAdapter`
   (`internal/handler/api.go:355`).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 3 MCP layer, ARCHITECTURE.md § Agent Runtime, § Protocols on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — empty-turn rule, nested artifact + pending-artifacts routes, ARTIFACT_REF as CUSTOM event. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 3 MCP layer, ARCHITECTURE.md § Agent Runtime, § Protocols on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — empty-turn rule, nested artifact + pending-artifacts routes, ARTIFACT_REF as CUSTOM event. Updated 2026-10-05 for sync-multiagent-feature — child-transcript route, root-only per-session routes, event list. -->

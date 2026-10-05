@@ -45,14 +45,14 @@ Trigger: admin picks an agent version to iterate on.
    output, and a JSONB array of acceptance criteria.
 3. Admin assigns the chat session to a DRAFT dataset via
    [`dataset-authoring`](capabilities.md#l2-capabilities); at most one DRAFT per dataset.
-4. Admin closes the DRAFT via `POST /datasets/{id}/close-draft/confirm`
-   ([`dataset-authoring`](capabilities.md#l2-capabilities)); member sessions flip to
-   `chat_sessions.locked_at`. The next DRAFT is seeded with the CLOSED version's sessions
+4. Admin closes the DRAFT via `POST /datasets/{id}/close-draft`
+   ([`dataset-authoring`](capabilities.md#l2-capabilities)); member sessions, and their child
+   sessions, flip to `chat_sessions.locked_at`. The next DRAFT is seeded with the CLOSED version's sessions
    (cumulative).
 
 Outcome: a CLOSED dataset version exists, ready to evaluate against.
 
-<!-- migrated from _migration-quarantine/DESIGN.md § Phase II, ARCHITECTURE.md § Feedback + datasets, § Data Flow / Flow 2 on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/DESIGN.md § Phase II, ARCHITECTURE.md § Feedback + datasets, § Data Flow / Flow 2 on 2026-09-28. Updated 2026-10-05 for sync-multiagent-feature — close-draft route, child sessions lock with members. -->
 
 ### Evaluation
 
@@ -151,11 +151,13 @@ delegates to a coordinator that fans out to workers) behind a single entrypoint 
 1. Admin builds each worker as an ordinary agent and brings it to `READY`
    ([`agent-configuration`](capabilities.md#l2-capabilities),
    [`version-management`](capabilities.md#l2-capabilities)). Workers need not be deployed.
-2. On the entrypoint (root) version, admin ticks **Enable agent tool** and adds sub-agent
-   bindings — pinned target version, tool-facing name, prompt note
-   ([`agent-tool-configuration`](capabilities.md#l2-capabilities)). Bindings on the
-   coordinator version do the same one level down. Saving a binding that would form a
-   cycle is refused.
+2. On a `DRAFT` (or still-`INITIALIZING`) entrypoint (root) version, the admin ticks
+   **Enable agent tool** and adds sub-agent bindings: a pinned `READY`/`DEPLOYED` target
+   version, a tool-facing name and a prompt note
+   ([`agent-tool-configuration`](capabilities.md#l2-capabilities)). Config is frozen once the
+   version leaves `DRAFT`, so changing a topology means forking a new DRAFT, which copies
+   the config. Bindings on the coordinator version do the same one level down. Saving a
+   binding that would form a cycle is refused.
 3. Admin tests the root version in [`backoffice-chat`](capabilities.md#l2-capabilities).
    When the root LLM calls `agent(subagent=…, prompt=…)`,
    [`sub-agent-dispatch`](capabilities.md#l2-capabilities) creates a child session, runs the
@@ -175,7 +177,7 @@ delegates to a coordinator that fans out to workers) behind a single entrypoint 
 Outcome: a deployed entrypoint agent that delegates to a reproducible, admin-composed
 topology of pinned agent versions.
 
-<!-- new value stream added 2026-09-30 for multiagent-tools. -->
+<!-- new value stream added 2026-09-30 for multiagent-tools. Updated 2026-10-05 for sync-multiagent-feature — agent-tool config only on DRAFT/INITIALIZING, frozen afterwards. -->
 
 ### Deployment
 

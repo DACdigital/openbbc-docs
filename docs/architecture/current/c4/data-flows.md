@@ -53,12 +53,12 @@ sequenceDiagram
     OBBCD->>DB: INSERT chat_message_feedback
     Admin->>OBBCD: POST chat s assign dataset
     OBBCD->>DB: INSERT dataset_version_sessions on DRAFT
-    Admin->>OBBCD: POST datasets id close draft confirm
-    OBBCD->>DB: UPDATE dataset_versions set status CLOSED, UPDATE chat_sessions set locked_at now, INSERT next DRAFT seeded from CLOSED
+    Admin->>OBBCD: POST datasets id close draft
+    OBBCD->>DB: UPDATE dataset_versions set status CLOSED, UPDATE chat_sessions set locked_at now on member roots then on all their child sessions, INSERT next DRAFT seeded from CLOSED
     OBBCD-->>Admin: dataset detail with CLOSED v_n and DRAFT v_n plus 1
 ```
 
-<!-- migrated from _migration-quarantine/DESIGN.md § Phase II, ARCHITECTURE.md § Feedback + datasets, § Data Flow / Flow 2, § Chat header overrides on 2026-09-28. Rewritten 2026-09-28 for GitHub-safe mermaid syntax. -->
+<!-- migrated from _migration-quarantine/DESIGN.md § Phase II, ARCHITECTURE.md § Feedback + datasets, § Data Flow / Flow 2, § Chat header overrides on 2026-09-28. Rewritten 2026-09-28 for GitHub-safe mermaid syntax. Updated 2026-10-05 for sync-multiagent-feature — close-draft route, lock cascades to child sessions. -->
 
 ## Evaluation
 
@@ -187,22 +187,22 @@ sequenceDiagram
     OBBCD->>DB: INSERT user message on root session
     OBBCD->>LLM: completion with agent tool whose subagent enum lists binding names and notes
     LLM-->>OBBCD: tool call agent with subagent, description and prompt, text only
-    OBBCD-->>User: TOOL_CALL_START then STEP_STARTED named after the binding
+    OBBCD-->>User: root TOOL_CALL_START ARGS END for agent, then STEP_STARTED with stepName binding name plus tool call id
     par up to AGENT_TOOL_MAX_PARALLEL spawns, refused past AGENT_TOOL_MAX_DEPTH
-        OBBCD->>DB: INSERT child session with parent_session_id, parent_tool_call_id, depth, target version, root user_id
+        OBBCD->>DB: INSERT child session with parent_session_id, parent_tool_call_id, depth and pinned target version, deployed child carries root user_id and agent_id, refused under a locked BO root
         OBBCD->>SUB: run pinned target version with fresh context holding only the prompt
         SUB->>LLM: completion with the target version tools
         SUB->>BE: MCP tool call via target wiring, header_overrides inherited on BO and eval paths
         BE-->>SUB: tool result
-        SUB-->>User: child tagged TOOL_CALL events, no sub agent text tokens and no child ARTIFACT_REF
+        SUB-->>User: child TOOL_CALL START ARGS END RESULT with prefixed toolCallId and rawEvent childSessionId, no sub agent text tokens and no child ARTIFACT_REF
         SUB->>DB: INSERT child messages
         SUB-->>OBBCD: final text, child tool result artifacts stay on the child session
     end
-    OBBCD-->>User: STEP_FINISHED then TOOL_CALL_END with the sub agent result
+    OBBCD-->>User: STEP_FINISHED then root TOOL_CALL_RESULT with the sub agent text
     OBBCD->>LLM: continue root completion with tool result
     LLM-->>OBBCD: final assistant reply
     OBBCD->>DB: INSERT tool and assistant messages on root session
-    OBBCD-->>User: TEXT_MESSAGE events then TURN_END
+    OBBCD-->>User: TEXT_MESSAGE events then RUN_FINISHED
 ```
 
 A sub-agent run is the same turn loop as the root, entered in-process for a different
@@ -212,7 +212,7 @@ if its version has the agent tool enabled; depth is counted from the root. In
 `eval-input.yaml` instead of Postgres and simulated or real MCP calls per
 `mock_mcp_tools`.
 
-<!-- new data flow added 2026-09-30 for multiagent-tools. GitHub-safe mermaid syntax per diagram conventions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — agent tool carries text only, no artifact scope flow between parent and child. -->
+<!-- new data flow added 2026-09-30 for multiagent-tools. GitHub-safe mermaid syntax per diagram conventions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — agent tool carries text only, no artifact scope flow between parent and child. Updated 2026-10-05 for sync-multiagent-feature — stepName, prefixed child tool-call events, TOOL_CALL_RESULT, RUN_FINISHED, locked-root refusal. -->
 
 ## Deployment
 
@@ -236,7 +236,7 @@ sequenceDiagram
     GW->>OBBCD: POST deployed agent_id sessions sid turn with verified user_id
     OBBCD->>DB: INSERT deployed_messages user turn
     loop AG UI event stream
-        OBBCD-->>GW: emits RUN_STARTED then TEXT_MESSAGE then TOOL_CALL then TURN_END events
+        OBBCD-->>GW: emits RUN_STARTED then TEXT_MESSAGE then TOOL_CALL then RUN_FINISHED events
         alt agent decides to call a tool
             OBBCD->>BE: MCP tool call using server to server credentials only, no per session header override on deployed path today
             BE-->>OBBCD: tool result
@@ -246,4 +246,4 @@ sequenceDiagram
     GW-->>User: streamed AG UI events
 ```
 
-<!-- migrated from _migration-quarantine/DESIGN.md § Phase V, ARCHITECTURE.md § Data Flow / Flow 5, PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model on 2026-09-28. Rewritten 2026-09-28 for GitHub-safe mermaid syntax. -->
+<!-- migrated from _migration-quarantine/DESIGN.md § Phase V, ARCHITECTURE.md § Data Flow / Flow 5, PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model on 2026-09-28. Rewritten 2026-09-28 for GitHub-safe mermaid syntax. Updated 2026-10-05 for sync-multiagent-feature — RUN_FINISHED replaces TURN_END. -->

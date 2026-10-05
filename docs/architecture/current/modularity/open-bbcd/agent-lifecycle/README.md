@@ -19,10 +19,14 @@ Owns tables: `agents` (+ inline `discovery_zip BYTEA` per migration 026), `agent
 `tool_backends` (kinds `http_endpoint` = MCP-over-REST bridge, `mcp_client` = MCP proxy),
 `agent_endpoint_backend` (agent-scoped structural wiring, migration 017),
 `agent_version_mcp_backend` (per-version backend visibility + editable prompt notes,
-migration 015).
+migration 015), `agent_version_subagent` (sub-agent bindings on the caller version, +
+`agent_versions.agent_tool_enabled`).
 
 Publishes: `/agents/*`, `/agents/wizard`, `/agent_versions/*/configure/*` (prompts +
-architecture + MCP + finalize), `/mcp*` (backend CRUD + test-connection), `/agents/*/deploy`,
+architecture + MCP + Agents tab + finalize), `/agent_versions/*/architecture/{mcp,agents}/*`
+(agent-tool writes return `409` outside `INITIALIZING`/`DRAFT`), and version/agent delete
+(`409` when a binding target, deployed child version or locked-session version would be
+removed), `/mcp*` (backend CRUD + test-connection), `/agents/*/deploy`,
 `/agents/*/undeploy`.
 
 Implements the [`agent-lifecycle`](../../../ddd/contexts/agent-lifecycle.md) DDD context on

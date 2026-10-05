@@ -75,9 +75,10 @@ runtime surface.
 
 **Purpose.** Backoffice UI + REST API + deployed agent runtime, all in one Go binary. Two
 orchestrator instances (BO chat + Deployed) share a stateless `tools.Builder`
-(`internal/handler/api.go:123`). The builder also assembles the built-in **agent tool** for
-versions with `agent_tool_enabled`; dispatching it re-enters the same orchestrator
-in-process for the pinned target version as a child session (no network hop, no
+(`internal/handler/api.go:123`). For versions with `agent_tool_enabled` and at least one
+binding, the orchestrator itself adds the built-in **agent tool** to the tool set and
+dispatches `agent` calls (never through the tool handler). It does so by re-entering the
+same orchestrator in-process for the pinned target version as a child session (no network hop, no
 inter-agent protocol), bounded by `AGENT_TOOL_MAX_DEPTH` / `AGENT_TOOL_MAX_PARALLEL`.
 
 **Tech stack.** Go 1.22+, `database/sql` + `lib/pq`, `html/template` + htmx (server-rendered,
@@ -95,7 +96,8 @@ contexts: `agents` (+ `discovery_zip BYTEA` migration 026), `agent_versions` (`s
 `chat_message_feedback`, `datasets` + `dataset_versions` + `dataset_version_sessions`,
 `evals` + `eval_sessions`, `training_sessions`, `deployed_sessions` + `deployed_messages` +
 `deployed_session_artifacts` (migration 028) (both session tables also hold child sessions
-linked by `parent_session_id` + `parent_tool_call_id`). **No local disk state required** — after
+linked by `parent_session_id` + `parent_tool_call_id` with a `depth`; deployed children also
+carry the pinned `agent_version_id` and the root's `agent_id` / `user_id`; migration 029). **No local disk state required** — after
 migration 026 inlined the discovery zip on `agents.discovery_zip BYTEA` the process reads
 and writes only Postgres (`DISCOVERY_STORAGE_DIR` env var no longer read;
 `internal/storage/storage.go` removed). With the artifact registry enabled, artifact bytes
@@ -127,7 +129,7 @@ base64 media) is persisted as before.
 
 **Modularity node.** ARCH_GAP (populated later by `/modularize`).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. Updated 2026-09-30 for multiagent-tools — in-process agent tool, agent_version_subagent, child sessions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — chat_session_artifacts + deployed_session_artifacts owned; bytes invariant scoped to an enabled registry; artifacts context is an env-hydrated registry (no store-config CRUD). -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. Updated 2026-09-30 for multiagent-tools — in-process agent tool, agent_version_subagent, child sessions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — chat_session_artifacts + deployed_session_artifacts owned; bytes invariant scoped to an enabled registry; artifacts context is an env-hydrated registry (no store-config CRUD). Updated 2026-10-05 for sync-multiagent-feature — orchestrator owns agent-tool injection and dispatch, child-session columns (migration 029). -->
 
 ### aikdm {#aikdm}
 
@@ -205,7 +207,7 @@ driver against `open-bbcd`'s REST surface.
 **Purpose.** Relational store for every stateful thing in OpenBBC.
 
 **Tech stack.** PostgreSQL 15+; `goose` migrations run by `open-bbcd` on boot (embedded via
-`//go:embed`, currently at `028_deployed_session_artifacts`). Compose brings up `postgres` service
+`//go:embed`, currently at `029_agent_tool`). Compose brings up `postgres` service
 healthchecked with `pg_isready`; named volume `postgres-data` persists across
 `docker compose down`. In k8s the Helm chart ships an optional in-cluster `StatefulSet`;
 production deployments typically point `externalDatabase.url` at a managed DB and disable
@@ -225,4 +227,4 @@ directly). `aikdm` itself never opens a DB connection.
 
 **Modularity node.** ARCH_GAP (populated later by `/modularize`).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § PostgreSQL, § Docker deployment on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § PostgreSQL, § Docker deployment on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028. Updated 2026-10-05 for sync-multiagent-feature — migration head 029. -->

@@ -14,9 +14,9 @@ Container: [open-bbcd](../../c4/containers.md#open-bbcd) · Context: [agent-life
 Go 1.22+ daemon shipping the backoffice UI + REST API + deployed agent runtime + MCP-over-
 REST bridge + artifact-store adapter in a single binary
 (`gcr.io/distroless/static-debian12:nonroot`, CGO off). Two orchestrator instances (BO chat
-+ Deployed) share a stateless `tools.Builder`, which also assembles the built-in **agent
-tool** for versions with `agent_tool_enabled`; dispatching it re-enters the orchestrator
-in-process for a pinned target version as a linked child session (no inter-agent
++ Deployed) share a stateless `tools.Builder`; the orchestrator adds the built-in **agent
+tool** for versions with `agent_tool_enabled` and dispatches it itself, re-entering the
+orchestrator in-process for a pinned target version as a linked child session (no inter-agent
 protocol), bounded by `AGENT_TOOL_MAX_DEPTH` / `AGENT_TOOL_MAX_PARALLEL`. Owns every stateful thing in Postgres
 transactionally on behalf of the DDD contexts — agents (+ discovery_zip BYTEA per
 migration 026), agent_versions (`INITIALIZING/PENDING/DRAFT/TRAINING/READY/DEPLOYED` per
