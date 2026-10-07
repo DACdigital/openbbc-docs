@@ -132,9 +132,13 @@
     BO chat, deployed runtime and sub-agents.
   - Provider keys come from env only.
   - Bifrost fallbacks and load-balancing are not used yet.
+  - v1 accepts only key-only providers on a fixed allow-list (anthropic, openai, gemini,
+    mistral, groq, cohere, openrouter, deepseek, xai, cerebras). Cloud-credential
+    (Azure OpenAI, Bedrock, Vertex) and keyless self-hosted providers are refused at
+    boot.
 
-  New providers are added by configuring Bifrost, not by writing new `llm.LLM`
-  implementations. The direct Anthropic adapter is kept as an env-selectable alternative
+  New providers are added through Bifrost (by extending the allow-list), not by writing
+  new `llm.LLM` implementations. The direct Anthropic adapter is kept as an env-selectable alternative
   and stays the default. `aikdm` is unchanged and keeps Google ADK + LiteLLM.
 
   Rationale: one adapter gives access to 20+ providers through a single normalised
@@ -150,7 +154,7 @@
 
   Date: 2026-10-07.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. Updated 2026-10-01 for sync-deployed-runtime-artifacts — two artifact legs, per-session artifact tables, bytes rule scoped to an enabled registry, text-only eval replay, text-only agent tool. Updated 2026-10-07 for bifrost — added Bifrost LLM-adapter locked decision. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. Updated 2026-10-01 for sync-deployed-runtime-artifacts — two artifact legs, per-session artifact tables, bytes rule scoped to an enabled registry, text-only eval replay, text-only agent tool. Updated 2026-10-07 for bifrost — added Bifrost LLM-adapter locked decision. Updated 2026-10-07 for sync-bifrost — v1 key-only provider allow-list. -->
 
 ## Open questions
 

@@ -30,7 +30,7 @@ C4Context
     Rel(claudecode, sys, "uploads flow-map zip via wizard", "HTTPS")
 ```
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Protocols, DESIGN.md § Architecture Overview, PRODUCTION.md § 2 Integrating your frontend, § 5 Auth model on 2026-09-28. Updated 2026-10-07 for bifrost — LLM providers reachable from open-bbcd via the embedded Bifrost Go SDK. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Protocols, DESIGN.md § Architecture Overview, PRODUCTION.md § 2 Integrating your frontend, § 5 Auth model on 2026-09-28. Updated 2026-10-07 for bifrost — LLM providers reachable from open-bbcd via the embedded Bifrost Go SDK. Updated 2026-10-07 for sync-bifrost — v1 provider allow-list. -->
 
 ## External actors
 
@@ -50,8 +50,8 @@ Linked to [`integrations.md`](integrations.md):
 - **Client backend (MCP-wrapped)** — the customer's business backend, exposes capabilities
   over MCP (SSE / Streamable HTTP).
 - **LLM providers** — Anthropic (default for `open-bbcd`), OpenAI, Gemini (aikdm via
-  LiteLLM). `open-bbcd` can alternatively reach any provider the embedded Bifrost Go SDK
-  supports (`OPENBBC_LLM_ADAPTER=bifrost`); Bifrost is a library inside `open-bbcd`, not
+  LiteLLM). `open-bbcd` can alternatively reach the v1 key-only provider allow-list
+  (anthropic, openai, gemini, mistral, groq, cohere, openrouter, deepseek, xai, cerebras) through the embedded Bifrost Go SDK (`OPENBBC_LLM_ADAPTER=bifrost`); Bifrost is a library inside `open-bbcd`, not
   an external system.
 - **Operator's auth gateway** — external ingress that verifies callers and injects a
   verified `user_id` before forwarding to the deployed runtime.
