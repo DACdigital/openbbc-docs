@@ -17,7 +17,10 @@ REST bridge + artifact-store adapter in a single binary
 + Deployed) share a stateless `tools.Builder`; the orchestrator adds the built-in **agent
 tool** for versions with `agent_tool_enabled` and dispatches it itself, re-entering the
 orchestrator in-process for a pinned target version as a linked child session (no inter-agent
-protocol), bounded by `AGENT_TOOL_MAX_DEPTH` / `AGENT_TOOL_MAX_PARALLEL`. Owns every stateful thing in Postgres
+protocol), bounded by `AGENT_TOOL_MAX_DEPTH` / `AGENT_TOOL_MAX_PARALLEL`. All model calls go
+through one boot-selected **LLM adapter** behind `llm.LLM`: direct Anthropic (default) or
+the embedded **Bifrost Go SDK** (`OPENBBC_LLM_ADAPTER=bifrost`), which serves any
+Bifrost-supported provider. Owns every stateful thing in Postgres
 transactionally on behalf of the DDD contexts — agents (+ discovery_zip BYTEA per
 migration 026), agent_versions (`INITIALIZING/PENDING/DRAFT/TRAINING/READY/DEPLOYED` per
 migration 025), tool_backends + `agent_endpoint_backend` + `agent_version_mcp_backend` +

@@ -123,8 +123,34 @@
   MCP-per-agent layer would add a network hop, a second auth surface, and a protocol
   dependency for what is an in-process call. Trade-off: upgrading a worker requires a new
   caller version (pin bump) — accepted for reproducibility. Date: 2026-09-30.
+- **Multi-provider LLM access in `open-bbcd` goes through the embedded Bifrost Go SDK.**
+  `open-bbcd` keeps its provider-agnostic `llm.LLM` interface. A second adapter wraps the
+  Bifrost Go SDK (`github.com/maximhq/bifrost/core`, Apache-2.0) in-process.
+  `OPENBBC_LLM_ADAPTER` selects `anthropic` (direct, default) or `bifrost` at boot.
+  On `bifrost`:
+  - `OPENBBC_DEFAULT_MODEL` is `<provider>/<model>` and stays deployment-global, shared by
+    BO chat, deployed runtime and sub-agents.
+  - Provider keys come from env only.
+  - Bifrost fallbacks and load-balancing are not used yet.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. Updated 2026-10-01 for sync-deployed-runtime-artifacts — two artifact legs, per-session artifact tables, bytes rule scoped to an enabled registry, text-only eval replay, text-only agent tool. -->
+  New providers are added by configuring Bifrost, not by writing new `llm.LLM`
+  implementations. The direct Anthropic adapter is kept as an env-selectable alternative
+  and stays the default. `aikdm` is unchanged and keeps Google ADK + LiteLLM.
+
+  Rationale: one adapter gives access to 20+ providers through a single normalised
+  request/stream surface, so `open-bbcd` no longer grows one adapter per provider. As an
+  in-process Go library it keeps the single-binary, no-sidecar deployment, adds no
+  network hop and no second secret surface, and fits the env-only credentials pattern.
+
+  Trade-offs:
+  - Bifrost becomes a core dependency whose request/stream schema `open-bbcd` must track.
+  - Provider-specific features (e.g. Anthropic PDF document blocks) are only as rich as
+    Bifrost's normalisation. MIMEs the Bifrost adapter cannot render natively fall back
+    to the existing `TextSurrogate`.
+
+  Date: 2026-10-07.
+
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. Updated 2026-10-01 for sync-deployed-runtime-artifacts — two artifact legs, per-session artifact tables, bytes rule scoped to an enabled registry, text-only eval replay, text-only agent tool. Updated 2026-10-07 for bifrost — added Bifrost LLM-adapter locked decision. -->
 
 ## Open questions
 
@@ -151,5 +177,16 @@
   READY" action (and a view of which callers pin a given version) is unscoped.
 - **Per-turn LLM budget for multi-agent turns.** Depth and parallelism are capped; total
   token / cost spend per root turn is not. A budget knob is unscoped.
+- **Per-version model selection.** The model is deployment-global (`OPENBBC_DEFAULT_MODEL`).
+  Bifrost makes per-version (or per-sub-agent) provider/model choice cheap to wire, but
+  that needs an `agent_versions` column and eval/training parity rules. Unscoped.
+- **Bifrost fallbacks / load-balancing.** Not enabled. Whether to expose Bifrost's
+  fallback chain and multi-key weighting via env is unscoped.
+- **Retiring the direct Anthropic adapter.** It is kept as the default and as a fallback
+  path. Once the Bifrost adapter reaches parity (streaming tool use, native image/PDF
+  rendering), whether to drop it and make `bifrost` the only adapter is undecided.
+- **Runtime vs eval model parity.** `aikdm` still uses LiteLLM, so with a non-Anthropic
+  Bifrost model the BO / deployed runtime and `aikdm evaluate` may run through different
+  client stacks. Moving `aikdm` onto the same model routing is unscoped.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 8 Known gaps, ARCHITECTURE.md § Docker deployment future, DESIGN.md § Out of Scope on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart + GHCR publish removed from roadmap). Updated 2026-09-30 for multiagent-tools — replaced single-agent scope assumption, added agent-tool locked decision and three open questions. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 8 Known gaps, ARCHITECTURE.md § Docker deployment future, DESIGN.md § Out of Scope on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart + GHCR publish removed from roadmap). Updated 2026-09-30 for multiagent-tools — replaced single-agent scope assumption, added agent-tool locked decision and three open questions. Updated 2026-10-07 for bifrost — added four LLM-adapter open questions. -->
