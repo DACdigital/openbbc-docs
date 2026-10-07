@@ -15,7 +15,7 @@ C4Container
 
     System_Boundary(sys, "OpenBBC") {
         Container(fmc, "flow-map-compiler", "Claude Code skill", "Scans a client frontend repo, emits flow-map schema v2")
-        Container(obbcd, "open-bbcd", "Go 1.22 plus", "Backoffice UI plus REST API plus deployed agent runtime plus MCP-over-REST bridge plus artifact-store-adapter plus LLM adapter in a single binary, no local disk state")
+        Container(obbcd, "open-bbcd", "Go 1.27 plus", "Backoffice UI plus REST API plus deployed agent runtime plus MCP-over-REST bridge plus artifact-store-adapter plus LLM adapter in a single binary, no local disk state")
         Container(aikdm, "aikdm", "Python 3.12 plus uv", "Generate, evaluate, train agent bundles, DB-unaware and REST-only")
         Container(aikdmrun, "aikdm-runner", "python 3.12 plus bash, curl, tini, uv, aikdm, scripts", "Kubernetes CronJob runtime that drains PENDING alphas, evals, trainings")
         ContainerDb(db, "postgres", "PostgreSQL 15 plus", "Owns agents plus discovery_zip BYTEA, versions, MCP wiring, chat, datasets, evals, training sessions, deployed sessions, per-session artifact rows in chat_session_artifacts and deployed_session_artifacts, and artifact_ref content blocks embedded in message content JSONB. No artifact-store configuration in DB — registry is env-driven")
@@ -37,7 +37,7 @@ C4Container
     Rel(fmc, obbcd, "uploads flow-map zip via wizard", "HTTPS")
 ```
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Components, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added aikdm-runner container, clarified client-backend integration as REST-bridge OR MCP-proxy, added agents.discovery_zip data ownership. Updated 2026-09-28 for artifact-support — Object store external system + artifact-store-adapter inside open-bbcd; artifact refs live in message content JSONB. Updated 2026-10-01 for sync-deployed-runtime-artifacts — postgres label lists the per-session artifact tables. Updated 2026-10-07 for bifrost — open-bbcd label and LLM relation name the LLM adapter. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Components, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — added aikdm-runner container, clarified client-backend integration as REST-bridge OR MCP-proxy, added agents.discovery_zip data ownership. Updated 2026-09-28 for artifact-support — Object store external system + artifact-store-adapter inside open-bbcd; artifact refs live in message content JSONB. Updated 2026-10-01 for sync-deployed-runtime-artifacts — postgres label lists the per-session artifact tables. Updated 2026-10-07 for bifrost — open-bbcd label and LLM relation name the LLM adapter. Updated 2026-10-07 for sync-bifrost — open-bbcd label Go 1.27 plus. -->
 
 ### flow-map-compiler {#flow-map-compiler}
 
@@ -84,15 +84,16 @@ Both orchestrators, and every sub-agent they spawn, call the model through one
 provider-agnostic `llm.LLM` interface (`internal/llm`). The concrete adapter is chosen once
 at boot by `OPENBBC_LLM_ADAPTER`:
 - `anthropic` (default) — direct `anthropic-sdk-go` adapter.
-- `bifrost` — the embedded Bifrost Go SDK, which routes to any Bifrost-supported provider.
+- `bifrost` — the embedded Bifrost Go SDK, which routes to the provider named in
+  `OPENBBC_DEFAULT_MODEL`, limited in v1 to a key-only allow-list (anthropic, openai, gemini, mistral, groq, cohere, openrouter, deepseek, xai, cerebras).
 
 The Bifrost adapter is meant to be the single place where new providers are added; future
 providers should not get their own per-provider `llm.LLM` implementations.
 
-**Tech stack.** Go 1.22+, `database/sql` + `lib/pq`, `html/template` + htmx (server-rendered,
+**Tech stack.** Go 1.27+, `database/sql` + `lib/pq`, `html/template` + htmx (server-rendered,
 no SPA; entrypoint `internal/handler/api.go:194`), `goose` migrations embedded via
 `//go:embed`. LLM adapters: `anthropic-sdk-go` (direct) and the Bifrost Go SDK
-(`github.com/maximhq/bifrost/core`, in-process; must build with CGO off). Multi-stage, multi-arch Docker image (`golang:1.26` builder,
+(`github.com/maximhq/bifrost/core`, in-process; must build with CGO off). Multi-stage, multi-arch Docker image (`golang:1.27` builder,
 `gcr.io/distroless/static-debian12:nonroot` runtime, CGO off). Binary subcommands: `serve`
 (default), `migrate`, `healthcheck`.
 
@@ -138,7 +139,7 @@ base64 media) is persisted as before.
 
 **Modularity node.** ARCH_GAP (populated later by `/modularize`).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. Updated 2026-09-30 for multiagent-tools — in-process agent tool, agent_version_subagent, child sessions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — chat_session_artifacts + deployed_session_artifacts owned; bytes invariant scoped to an enabled registry; artifacts context is an env-hydrated registry (no store-config CRUD). Updated 2026-10-05 for sync-multiagent-feature — orchestrator owns agent-tool injection and dispatch, child-session columns (migration 029). Updated 2026-10-07 for bifrost — env-selected LLM adapter, embedded Bifrost Go SDK. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. Updated 2026-09-30 for multiagent-tools — in-process agent tool, agent_version_subagent, child sessions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — chat_session_artifacts + deployed_session_artifacts owned; bytes invariant scoped to an enabled registry; artifacts context is an env-hydrated registry (no store-config CRUD). Updated 2026-10-05 for sync-multiagent-feature — orchestrator owns agent-tool injection and dispatch, child-session columns (migration 029). Updated 2026-10-07 for bifrost — env-selected LLM adapter, embedded Bifrost Go SDK. Updated 2026-10-07 for sync-bifrost — v1 provider allow-list, Go 1.27 / golang:1.27 builder. -->
 
 ### aikdm {#aikdm}
 
