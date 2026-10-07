@@ -20,6 +20,18 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
   `029_agent_tool`.
 - **Go 1.22+, `database/sql` + `lib/pq`.** Runtime image is
   `gcr.io/distroless/static-debian12:nonroot`, CGO off.
+- **`open-bbcd` LLM adapter is chosen at boot by `OPENBBC_LLM_ADAPTER`** (optional,
+  `anthropic` default, or `bifrost`; any other value fails boot). One adapter instance
+  serves BO chat, the deployed runtime and all sub-agents. There is no per-request or
+  per-version adapter switch.
+- **On the `bifrost` adapter, `OPENBBC_DEFAULT_MODEL` must be `<provider>/<model>`** with
+  `<provider>` a Bifrost provider id (e.g. `anthropic/claude-sonnet-4-6`,
+  `openai/gpt-4o`). A malformed value or unknown provider fails boot. A missing key for
+  the selected provider lazy-fails at the first LLM call, as `ANTHROPIC_API_KEY` does
+  today. On the `anthropic` adapter the value stays a bare Anthropic model id.
+- **Bifrost is embedded as a Go library and must build with CGO off** so the distroless
+  static runtime image is unchanged. Provider keys come from env only. No Bifrost
+  config file, no Bifrost gateway process and no provider config in Postgres.
 - **Python 3.12+ for `aikdm`, managed with `uv`.** Multi-provider LLM via Google ADK +
   LiteLLM (Anthropic, OpenAI, Gemini).
 - **`aikdm-runner` image is the k8s drainer runtime** (`Dockerfile.aikdm-runner`): bash +
@@ -110,4 +122,4 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
   minutes) balances CDN-cacheable link lifetime against replay risk. Ignored by adapters
   whose `PreferredDelivery()` is `Bytes` (proxied read).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. Updated 2026-09-30 for multiagent-tools — added AGENT_TOOL_MAX_DEPTH, AGENT_TOOL_MAX_PARALLEL, DAG topology rule, target-status rule. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028, nested upload paths, ARTIFACT_MAX_PENDING, bytes rule scoped to an enabled registry. Updated 2026-10-05 for sync-multiagent-feature — migration head 029, AGENT_TOOL_MAX_* validation, DAG acyclic by construction, config frozen outside INITIALIZING/DRAFT. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. Updated 2026-09-30 for multiagent-tools — added AGENT_TOOL_MAX_DEPTH, AGENT_TOOL_MAX_PARALLEL, DAG topology rule, target-status rule. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028, nested upload paths, ARTIFACT_MAX_PENDING, bytes rule scoped to an enabled registry. Updated 2026-10-05 for sync-multiagent-feature — migration head 029, AGENT_TOOL_MAX_* validation, DAG acyclic by construction, config frozen outside INITIALIZING/DRAFT. Updated 2026-10-07 for bifrost — OPENBBC_LLM_ADAPTER, provider/model format, CGO-off Bifrost embedding. -->

@@ -14,7 +14,7 @@ C4Context
     System_Ext(gateway, "Operator auth gateway", "verifies caller and rewrites user_id")
     System_Ext(clientfe, "Client frontend", "consumes AG-UI")
     System_Ext(clientbe, "Client backend", "REST or MCP, exposes capabilities as tools")
-    System_Ext(llmprov, "LLM providers", "Anthropic default, OpenAI, Gemini via LiteLLM")
+    System_Ext(llmprov, "LLM providers", "Anthropic default, OpenAI, Gemini and others via Bifrost or LiteLLM")
     System_Ext(claudecode, "Claude Code", "Runtime that executes flow-map-compiler")
     System_Ext(objstore, "Object store", "Deployer-provided artifact blob backend, S3 API")
 
@@ -30,7 +30,7 @@ C4Context
     Rel(claudecode, sys, "uploads flow-map zip via wizard", "HTTPS")
 ```
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Protocols, DESIGN.md § Architecture Overview, PRODUCTION.md § 2 Integrating your frontend, § 5 Auth model on 2026-09-28 -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § System Overview, § Protocols, DESIGN.md § Architecture Overview, PRODUCTION.md § 2 Integrating your frontend, § 5 Auth model on 2026-09-28. Updated 2026-10-07 for bifrost — LLM providers reachable from open-bbcd via the embedded Bifrost Go SDK. -->
 
 ## External actors
 
@@ -50,7 +50,9 @@ Linked to [`integrations.md`](integrations.md):
 - **Client backend (MCP-wrapped)** — the customer's business backend, exposes capabilities
   over MCP (SSE / Streamable HTTP).
 - **LLM providers** — Anthropic (default for `open-bbcd`), OpenAI, Gemini (aikdm via
-  LiteLLM).
+  LiteLLM). `open-bbcd` can alternatively reach any provider the embedded Bifrost Go SDK
+  supports (`OPENBBC_LLM_ADAPTER=bifrost`); Bifrost is a library inside `open-bbcd`, not
+  an external system.
 - **Operator's auth gateway** — external ingress that verifies callers and injects a
   verified `user_id` before forwarding to the deployed runtime.
 - **Claude Code** — host for the `flow-map-compiler` skill; runs on the discovery author's
