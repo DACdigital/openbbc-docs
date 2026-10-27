@@ -55,8 +55,12 @@ dependency (Azure SDK for Go). It also changes stated facts in
 - Boot `Probe` with the same contract as `s3_compatible`.
 - An opt-in integration test against Azurite (local emulator) or a real account, plus a
   manual live smoke test against `staisalesdev/session-artifacts`.
-- An `azurite` service in `docker-compose.yml` under the `artifacts` profile, plus example
-  env blocks in `docker-compose.yml` comments and `open-bbcd/.env.example`.
+- An `azurite` service in `docker-compose.yml` under the `artifacts` profile, started with
+  `--skipApiVersionCheck` so the SDK's newer `x-ms-version` is accepted. Also example env
+  blocks in the `docker-compose.yml` comments and `open-bbcd/.env.example`, using the Azurite
+  dev account `devstoreaccount1` or placeholders and never a real account name. A comment
+  notes that `http://azurite:10000` SAS redirects resolve only inside the compose network,
+  the same caveat as `http://minio:9000`.
 
 ### Out of scope
 
@@ -93,11 +97,11 @@ Error messages are prefixed `azure_blob:` and name the missing or invalid key, m
 | `Kind()` | `"azure_blob"` |
 | `PreferredDelivery()` | `DeliverySignedURL` |
 | `Put(uri, mime, r, size)` | Block-blob upload (`UploadStream`) of the blob named `uri` verbatim (`sha256/<hex>`), with `BlobContentType=mime`. Returns `{URI, SizeBytes: size, Sha256: hex from uri}`. |
-| `Get(uri)` | `DownloadStream` body. `BlobNotFound`/404 → wrapped `ErrBlobMissing`. |
+| `Get(uri)` | `DownloadStream` body. Any 404 (`BlobNotFound` or `ContainerNotFound`) → wrapped `ErrBlobMissing`. |
 | `Sign(uri, ttl, opts)` | Local, no network: Blob SAS, permission `r`, protocol HTTPS (HTTPS+HTTP only when ENDPOINT is http), start = now − 5 min (clock skew), expiry = now + ttl (`ttl<=0` → constructor TTL). `opts.ContentType` → `rsct`, `opts.ContentDisposition` → `rscd`. Like S3 presign, it does not check that the blob exists. |
-| `Stat(uri)` | `GetProperties`. 404 / `BlobNotFound` → `{Exists:false}, nil`. Success → `Exists, MIME=ContentType, SizeBytes=ContentLength, Sha256=hex from uri`. |
+| `Stat(uri)` | `GetProperties`. Any 404 (`BlobNotFound` or `ContainerNotFound`) → `{Exists:false}, nil`. This is deliberately lenient, matching `isS3NotFound` treating `NoSuchBucket` as not-found (`internal/artifacts/s3.go`). A deleted container surfaces as 410 on retrieval. `Probe` catches it at boot. Success → `Exists, MIME=ContentType, SizeBytes=ContentLength, Sha256=hex from uri`. |
 | `Delete(uri)` | `Delete` with snapshots included. `BlobNotFound` → nil, which keeps it idempotent like S3 `RemoveObject`. |
-| `Probe()` | Put `_probe/<rand>` → Stat → Delete. Then Stat of `_probe/missing-<rand>` must report `Exists:false`. A 403 on any step yields `ErrProbeFailed` naming the account and container and saying the key lacks permission. A `ContainerNotFound` yields `ErrProbeFailed` saying the container must exist. |
+| `Probe()` | Put `_probe/<rand>` → Stat → Delete. Then Stat of `_probe/missing-<rand>` must report `Exists:false`. Any failure yields `ErrProbeFailed` naming the account, the container and the Azure error code. For the common codes it adds a hint: `AuthenticationFailed` → wrong or rotated key; `AuthorizationFailure` → storage-account firewall/network rules block the daemon; `KeyBasedAuthenticationNotPermitted` → Shared Key is disabled on the account; `ContainerNotFound` → the container must exist. |
 
 `Stat`'s `Sha256` derives from the content-addressed URI and not from the store's ETag.
 That is accurate for this kind, because blobs are only written under `sha256/<hex>`.
@@ -125,6 +129,10 @@ are all unchanged.
 
 The probe wording "for s3_compatible this needs s3:ListBucket" gains an Azure equivalent:
 Shared Key always grants this, so there is no extra permission to add.
+`c4/integrations.md:11` also needs its Protocol cell ("S3 API over HTTPS") generalised to
+include the Azure Blob REST API, and its Auth cell, which lists only S3 env vars, extended
+with the `azure_blob` keys. `store.go`'s S3-specific `Probe` doc comment is generalised in
+code.
 
 ## Acceptance criteria
 
@@ -147,8 +155,9 @@ Shared Key always grants this, so there is no extra permission to add.
 
 ### Integration (`TestAzureBlob_Integration`, opt-in via `AZURE_BLOB_*` env; skipped otherwise)
 
-- [ ] Passes against Azurite (`docker compose --profile artifacts up -d azurite`, container created by
-      the documented bootstrap command).
+- [ ] Passes against Azurite (`docker compose --profile artifacts up -d azurite`). The test itself
+      creates the container if absent, so no `az` CLI bootstrap is needed. This only happens in
+      test code: the adapter never creates containers.
 - [ ] Passes against the real `staisalesdev` account, container `session-artifacts`.
 - [ ] Sequence: `Probe` succeeds. `Stat` of a fresh URI reports not-exists. `Put` and then `Stat` reports
       exists with matching MIME and size. `Get` returns identical bytes. A plain `http.Get` of
@@ -169,6 +178,8 @@ Shared Key always grants this, so there is no extra permission to add.
 - [ ] An image artifact is rendered to the model in the next turn (multimodal path), with no
       error logged.
 - [ ] No credential is committed. Smoke credentials live only in a gitignored env file.
+- [ ] After the smoke test, the `staisalesdev` account key used during design is rotated. The new
+      key never leaves the gitignored env file or the deployer's secret store.
 
 ### Docs
 
@@ -185,21 +196,26 @@ Shared Key always grants this, so there is no extra permission to add.
   (documented behaviour). The integration test verifies it.
 - Azurite accepts the same SAS and Shared Key signing as the real service, using its well-known dev
   account `devstoreaccount1`.
-- The azblob module (`azcore` + `azblob`) builds with `CGO_ENABLED=0` on Go 1.26. It is pure Go.
+- The azblob module (`azcore` + `azblob`) builds with `CGO_ENABLED=0` on the repo's toolchain
+  (Go 1.26 today, 1.27+ once bifrost lands). It is pure Go.
 
 ### Risks
 
 - **Account key blast radius.** The key grants full control of the whole storage account, not just the
   container. Mitigation: document that deployers should use a dedicated storage account for
   artifacts. Entra ID / user-delegation SAS (out of scope) is the long-term fix.
+- **Shared Key disabled on the account.** Azure Policy and newer account defaults increasingly set
+  `allowSharedKeyAccess=false`, and then this adapter cannot work. `Probe` fails boot with
+  `KeyBasedAuthenticationNotPermitted`. Mitigation: a dedicated artifacts account with Shared
+  Key enabled. Entra ID support is the long-term fix.
 - **Clock skew.** A SAS is rejected if `st` is in the future on Azure's clock. Mitigated by backdating
   `st` by 5 minutes.
 - **SAS URLs are bearer tokens.** Exposure is the same as S3 presigned URLs. They are bounded by
   `ARTIFACT_SIGNED_URL_TTL_SECONDS` and read-only on one blob.
 - **Dependency weight.** The Azure SDK adds `azcore` and its transitive dependencies to the binary. This is
   accepted, in the same way `minio-go` was accepted for S3.
-- **Credentials pasted during design.** The `staisalesdev` key was shared in a working session. Rotate
-  it after the smoke test if that transcript is shared beyond the team.
+- **Credentials pasted during design.** The `staisalesdev` key was shared in a working session.
+  It is rotated unconditionally after the smoke test (see Live smoke AC).
 
 ## Cross-references
 
