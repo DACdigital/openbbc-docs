@@ -62,9 +62,10 @@ Root causes in code:
 
 Success is judged by:
 
-- A reference session with N user turns always produces exactly N simulated user turns.
-- Every criterion is judged on the turn it was written for, and nothing later in the
-  conversation can affect that verdict.
+- A reference session with N user turns produces exactly N simulated user turns, unless the
+  target fails partway (then at most N, with the rest marked inconclusive).
+- Every criterion is judged on the turn it was written for (unmapped criteria: on the last
+  turn), and nothing later in the conversation can affect that verdict.
 - Run-to-run noise drops to where `train-agent` can see real improvements. The **target** (not a
   merge gate; see Acceptance 9) is a spread of at most 6 percentage points peak-to-peak (±3) in
   the score across 3 runs of an unchanged version on an unchanged CLOSED 10-session dataset with
@@ -117,7 +118,10 @@ not contract fields.
      including, reference user message *k+1*.
    - For each turn the script emits `UserStep(k)` then `AgentStep(k)`, then `JudgeStep(k)` if
      turn *k* has criteria.
-   - Assistant messages before the first user message belong to turn 1.
+   - Assistant messages before the first user message belong to turn 1. They are not shown to
+     the target as history, so a criterion attached to such a greeting is judged against the
+     reply to user turn 1. This is intended: the target under test never produces greetings
+     unprompted.
    - `role: tool` messages belong to their span only.
 
    **Criteria routing.** A criterion goes to the turn whose span contains its `message_id`. That
@@ -165,7 +169,8 @@ not contract fields.
      - keep ids, numbers, dates and pasted JSON or documents verbatim;
      - change only the connective wording.
 
-     An empty `content` falls back to the verbatim text for that turn.
+     An empty `content`, a simulator call that raises, or output that does not parse all fall
+     back to the verbatim text for that turn. The simulator can never fail a session.
 
 4. **History mode** (`AIKDM_EVAL_HISTORY_MODE`). This decides what the target sees as turns
    1…*k-1* when it generates reply *k*:
@@ -200,7 +205,8 @@ not contract fields.
      through `tool_calls[].result`, so they are never rendered twice.
 
    **Tool calls the bundle doesn't declare.** In `reference` history, a tool call is rendered as
-   a structured tool call only if its `name` is among the current bundle's tools. Otherwise
+   a structured tool call only if its `name` is among the current bundle's tools, resolved
+   exactly as `build_tool_specs` resolves them (`name`, falling back to `id`). Otherwise
    (the tool was removed or renamed, or the bundle has no tools), the call is rendered as plain
    assistant text:
    `[called tool <name> with <args json> → <result json>]`.
@@ -224,15 +230,17 @@ not contract fields.
    temperature 0, set through the judge `LlmAgent`'s `generate_content_config`.
 
 6. **Inconclusive verdicts.** `Judgment` gains `inconclusive: bool = False`. An inconclusive
-   judgment always has `passed=False`, so it counts as failed in `passed_criteria`,
+   judgment always has `passed=False`, which a pydantic `model_validator` on `Judgment` enforces, so it counts as failed in `passed_criteria`,
    `total_criteria` and the score. The flag tells "the agent got it wrong" apart from "we could
    not judge it". The executor sets it, never the judge LLM, in these cases:
    - **Turn not reached** (`simulated` mode only). The target for turn *j < k* raised, or
      returned the tool-budget sentinel `"(target agent exceeded tool-call budget)"`.
      - The executor skips every later `UserStep`, `AgentStep` and `JudgeStep`.
-     - Turn *j*'s own criteria are still judged on whatever span it produced. A raise that
-       produced no assistant message makes those criteria inconclusive with reason
-       `"turn <j> target error: <exception message>"`, and no judge call is made.
+     - If the target **raised**, turn *j*'s own criteria are inconclusive with reason
+       `"turn <j> target error: <exception message>"`, and no judge call is made. A partial
+       span is not recovered.
+     - If the target hit the **tool budget**, turn *j* returned a span ending in the sentinel
+       message, and its criteria are judged on that span as normal.
      - Criteria of later turns *k* are inconclusive with reason
        `"turn <k> not reached: turn <j> <cause>"`, where `<cause>` is `target error: <message>`
        or `exceeded tool-call budget`.
@@ -241,9 +249,12 @@ not contract fields.
      parse, or returns a different number of entries than the criteria it was sent. All of
      that turn's criteria are inconclusive with reason `"judge error: <message>"`; a count
      mismatch uses the message `"expected <n> judgments, got <m>"`. The other turns' judgments
-     and the transcript are kept. The session is no longer zeroed by
-     the orchestrator's catch-all `except`, which now only covers failures outside the
-     executor, such as script compilation or tool-caller construction.
+     and the transcript are kept.
+   - **Session error.** The orchestrator's catch-all `except` now only covers failures outside
+     the executor, such as script compilation or tool-caller construction. When it fires,
+     every criterion of that session becomes an inconclusive judgment with reason
+     `"session error: <message>"` instead of the current `judgments=[]`. Every criterion
+     always leaves a per-criterion record.
    - **Empty script**, as defined in Scope → In → 1.
 
 7. **Result semantics.**
@@ -290,7 +301,7 @@ not contract fields.
      - N turns make N calls, in every mode combination;
      - in `paraphrase`, the simulator is called exactly N times and cannot change the step
        count;
-     - an empty paraphrase falls back to verbatim;
+     - an empty, raising or unparseable paraphrase falls back to verbatim;
      - when the agent's reply ends with a question, turn *k+1* still carries reference turn
        *k+1*'s intent (in `verbatim`, identical text).
    - **History:**
@@ -318,7 +329,11 @@ not contract fields.
        and `total_criteria` is unchanged;
      - `Judgment.criterion` is the input text even when the judge echoes it differently;
      - an unmapped criterion is judged and can pass;
-     - `inconclusive` judgments count as failed in the score.
+     - `inconclusive` judgments count as failed in the score;
+     - `Judgment(inconclusive=True, passed=True)` is rejected by the model validator;
+     - a tool-budget sentinel at turn 1 still judges turn 1 on its span;
+     - an orchestrator-level session error emits one inconclusive `"session error: …"`
+       judgment per criterion.
    - **Teacher:** `_render_last_eval` omits inconclusive judgments and keeps the `<score>` line.
 
 11. **Noise measurement**, run manually and recorded in the implementation PR description.
@@ -352,9 +367,11 @@ not contract fields.
 - **Per-eval or per-session control** of the modes from open-bbcd or the BO. That would need
   contract fields and BO UI, which is C2. Do it only if aikdm-wide settings turn out to be too
   coarse.
-- **A BO per-turn view and an inconclusive badge** in eval detail. The data
-  (`Judgment.message_id`, `Judgment.inconclusive`) is now accurate. This is BO-only follow-up
-  work.
+- **BO eval-detail changes**: a per-turn view, an inconclusive badge, and showing
+  `aikdm_meta.history_mode`. The data (`Judgment.message_id`, `Judgment.inconclusive`,
+  `aikdm_meta`) is now accurate. This is BO-only follow-up work. Until then, a `reference`-mode
+  transcript renders in the BO as one continuous conversation, although each reply was
+  generated against canned reference history. Say this in the release note.
 - **`client_context`** itself, which has its own spec. This spec provides only the `UserStep`
   seam.
 - **Multi-agent eval.** Versions with the agent tool still get `409` from export, and child
@@ -367,7 +384,9 @@ not contract fields.
 
 ## Contracts
 
-- **API / DB / events:** none.
+- **open-bbcd endpoints / DB / events:** no change. `POST /evals/{id}/result` accepts the
+  additive `eval-result-v1` fields below as-is (opaque JSONB). Under `docs/conventions/api.md` →
+  Versioning, an additive field needs no version bump.
 - **`eval-input-v1`** (open-bbcd `internal/eval/export.go` → aikdm `eval/schemas.py`):
   unchanged. aikdm now *uses* `InputCriterion.message_id`, message order and roles, and
   `InputMessage.tool_calls` (for `reference` history). All of these were already present.
@@ -394,8 +413,9 @@ not contract fields.
    calls and produces N simulated user turns, in every mode combination. A "target call" is one
    `target_turn` invocation, however many LiteLLM completions its tool loop makes. Covered by
    unit tests.
-2. `run_session` executes a script compiled by `compile_script`. The number of steps is fixed
-   before the first LLM call, and nothing at runtime can add or remove steps.
+2. `run_session` executes a script compiled by `compile_script`. The step list is fixed at
+   compile time, before the first LLM call. At runtime, steps can only be skipped, and only on
+   failure (Scope → In → 6). Nothing can add steps.
 3. In `verbatim` mode, simulated user turn *k*'s text equals `render_user_turn` of reference user
    turn *k*, and the user-simulator model is never called. In `paraphrase` mode, the simulator's
    output schema has no `stop` field.
@@ -420,9 +440,13 @@ not contract fields.
 9. The noise measurement (Scope → In → 11) is run and recorded in the implementation PR. The ±3
    point target from Business value is a **target, not a merge gate**. If it is missed but the
    spread improves on the before-numbers, the PR merges, and the numbers feed the out-of-scope
-   promotion-rule follow-up.
+   promotion-rule follow-up. If the spread does **not** improve, the PR does not merge until the
+   cause is understood. Three runs per arm is a small sample, so in that case run at least 5
+   per arm before concluding.
 10. `uv run pytest` and `ruff` in `aikdm/` pass. The existing `test_train_orchestrator.py`
-    passes unchanged.
+    passes unchanged. `tests/integration/test_evaluate_cli.py`, which monkeypatches
+    `next_user_turn` (with `stop`) and `judge_transcript`, is rewritten against the new seams;
+    "unchanged" does not apply to it.
 
 ## Risks & assumptions
 
@@ -451,9 +475,12 @@ not contract fields.
   remove or rename tools, and Anthropic rejects tool history without matching tool
   definitions. Mitigation (Scope → In → 4): such calls are rendered as plain text. The target
   still sees what happened, but cannot be steered into calling a tool it no longer has.
-- **Follow-up after merge:** run `/arch-review eval-turn-replay` to sync the arch docs that still
-  describe a simulator LLM on every run (`modularity/aikdm/eval-scoring/README.md`,
-  `bizbok/capabilities.md`, `bizbok/value-streams.md`, `c4/data-flows.md`).
+- **Follow-up after merge:** run `/arch-review eval-turn-replay` to sync the arch docs.
+  - These still describe a simulator LLM on every run: `modularity/aikdm/README.md`,
+    `modularity/aikdm/eval-scoring/README.md` (also its whole-transcript judge wording),
+    `bizbok/capabilities.md`, `bizbok/value-streams.md` and `c4/data-flows.md`.
+  - Also consider an "inconclusive judgment" term in `glossary.md`, and a note on the
+    `Eval session` row in `bizbok/information-map.md`.
 - **Verified:** open-bbcd stores `judgments` and `aikdm_meta` as opaque JSONB, and the BO's
   `parseJudgments` ignores unknown keys, so the additive result fields pass through untouched.
 - **Assumption:** the export keeps transcript message order and roles exactly as stored (it does
