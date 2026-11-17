@@ -45,10 +45,16 @@ can't be session metadata. The workarounds all fail:
 
 Success is judged by:
 - A client attaches a JSON object to a turn. The model sees it on that turn and on every later
-  replay of that turn, exactly as sent and before the user's text.
+  replay of that turn, in the canonical form it was given once on arrival (Scope → In → 3),
+  before the user's text.
 - After a reload, the client can read it back from session read as structured data, clearly
   marked so the UI can hide it.
-- An eval built from such a session replays the same bytes to the target that production sent.
+- An eval built from such a session replays the same bytes to the target that the original
+  session's model saw. Datasets are built only from BO chat sessions
+  (`repository/dataset.go:287`), and the BO chat UI has no way to attach a context. So the path
+  is: the consumer's own frontend (or a script) calls the **BO** turn route
+  `POST /agent_versions/{v}/chat/{s}/turn` with `client_context` while a PL builds the dataset.
+  Deployed production sessions never become eval data, today or with this change.
 - Clients that don't send the field see no change at all.
 
 ## Change level
@@ -76,11 +82,16 @@ history, changes what session read returns, and changes the eval export contract
    returned before the stream opens. The response goes through the same plain-text path as
    `empty_turn` today (`http.Error` with the sentinel's text).
    - **`null` or absent:** no context; the behaviour is exactly as today.
-   - **Not an object** (array, string, number, bool): 400 with body
-     `"invalid client_context: must be a JSON object"` (new `types.ErrClientContextInvalid`).
-   - **Contains a NUL character** (`\u0000`) anywhere in a key or string. Postgres JSONB rejects
-     it, which today would fail only after the stream opens. The response is the same 400
-     `invalid client_context…`, with the message suffix `: contains \u0000`.
+   - **Not an object** (array, string, number, bool): 400 with exact body
+     `invalid client_context: must be a JSON object`.
+   - **Contains a NUL character** (U+0000) anywhere in a key or string value. Postgres JSONB
+     rejects it, which today would fail only after the stream opens. 400 with exact body
+     `invalid client_context: contains \u0000`, where `\u0000` is the literal six-character
+     text (backslash, `u`, four zeros).
+
+     Both bodies come from one new sentinel, `types.ErrClientContextInvalid` (text
+     `invalid client_context`), wrapped as `fmt.Errorf("%w: must be a JSON object", …)` and
+     `fmt.Errorf("%w: contains \\u0000", …)`. Callers match with `errors.Is`.
    - **Too large:** the canonical string (Scope → In → 3) is bigger than
      `OPENBBC_CLIENT_CONTEXT_MAX_BYTES` (default `65536`). 400 with body
      `"client_context exceeds OPENBBC_CLIENT_CONTEXT_MAX_BYTES"` (new
@@ -89,6 +100,10 @@ history, changes what session read returns, and changes the eval export contract
 
    The field is decoded as `json.RawMessage`. The handler checks that its first non-whitespace
    byte is `{`, then canonicalizes it (Scope → In → 3).
+
+   **Duplicate keys: last value wins.** `{"a":1,"a":2}` canonicalizes to `{"a":2}`, at every
+   depth, without an error. This is Go's map-decoding behaviour, stated here as the contract.
+   Detecting duplicates would need a token-level parser for no consumer benefit.
 
    **Empty-turn rule unchanged.** A turn with a `client_context` but no text and no pending
    artifacts is still a 400 `empty_turn`. The block never counts as user content for this rule,
@@ -107,8 +122,10 @@ history, changes what session read returns, and changes the eval export contract
    It is always first, before the `text` block(s) and any `artifact_ref` blocks that
    `appendUserTurn` adds. The two fields have different jobs:
    - **`canonical`** is a JSON **string** holding the canonical JSON text (Scope → In → 3). It is
-     the **only** source for rendering, the size cap and the export's `rendered`. Postgres JSONB
-     stores strings byte-for-byte, so this text never changes after ingest.
+     the **only** source for rendering, the size cap and the export's `rendered`. The guarantee
+     is about the **decoded string value**, not the stored text: Postgres and `json.Marshal` may
+     re-escape it in the outer document (e.g. `<` → `\u003c`), but decoding gives back exactly
+     the Go string that was stored. That is all rendering needs.
    - **`context`** is the same object as a JSON value, for clients that read the session back as
      structured data. It is **informational only**: JSONB normalizes its numbers (`1e3` →
      `1000`) and its key order, so it is never used for rendering or measuring.
@@ -156,13 +173,18 @@ history, changes what session read returns, and changes the eval export contract
    render pass that already builds a fresh LLM-bound copy of `req.Messages` before every
    `o.llm.Generate` call (`renderArtifactsForLLM`, `internal/chat/artifacts.go:79`, called at
    `orchestrator.go:381`).
-   - That pass (or a sibling it calls) replaces each `ClientContextBlock` with
-     `llm.TextBlock{Text: RenderClientContext(b.Canonical)}`, in its position, which is first.
+   - The conversion goes in the **shared copy loop at the top of `renderArtifactsForLLM`**
+     (`artifacts.go:87–90`), which runs **before** the early return for non-multimodal
+     providers or a nil resolver (`artifacts.go:92–101`). It must not go in the budgeted render
+     loop (`artifacts.go:111+`), which only multimodal providers reach. Each `ClientContextBlock`
+     in the copy is replaced with `llm.TextBlock{Text: RenderClientContext(b.Canonical)}`, in
+     its position, which is first.
    - It runs on every round of every turn and covers history and the current turn alike, so the
      model sees the context on the turn it arrives and on every later replay, in order.
    - Neither LLM adapter changes. Because both adapters silently drop unknown block types, a
      `ClientContextBlock` must never reach them. An orchestrator test asserts that no
-     `ClientContextBlock` exists in the LLM-bound request.
+     `ClientContextBlock` exists in the LLM-bound request. It runs with **both** a plain fake LLM
+     (early-return branch) and a `MultimodalRenderer` fake with a resolver (budgeted branch).
 
    No system-prompt line is added. Agents that use the block explain it in their own prompt.
 
@@ -172,7 +194,7 @@ history, changes what session read returns, and changes the eval export contract
      `{"type":"client_context","canonical":"…","context":{…}}` on its user message, so clients can hide it by `type` and rebuild state after a reload.
      There is no code change on this route beyond what Scope → In → 2 stores.
    - `GET .../children/...` (child transcripts) never contains the block (Scope → In → 8).
-   - The BO chat view (`internal/handler/chat.go` `decodeBlock`, lines 530–596; template
+   - The BO chat view (`internal/handler/chat.go` `decodeBlock`, lines 534–595; template
      `web/templates/chat/bubble.html`) gets a new `blockView.Kind` `client_context`. It renders
      as a collapsed `<details>` labelled "client context" above the user's text, showing the
      `canonical` JSON pretty-printed. The read-only child transcript view uses the same builder.
@@ -227,6 +249,7 @@ history, changes what session read returns, and changes the eval export contract
       - `<>&` stay literal;
       - number literals such as `1.0`, `1e3` and big integers are preserved in `canonical`;
       - U+2028 is escaped deterministically;
+      - duplicate keys (top level and nested) keep the last value;
       - `\u0000` in a key or a value is rejected with 400 before the stream opens;
       - the size cap is measured on the canonical string.
     - **Orchestrator** (fake LLM):
@@ -242,9 +265,11 @@ history, changes what session read returns, and changes the eval export contract
       - `blocksToJSON` / `parseBlocks` round-trip `ClientContextBlock`, and the block is stored
         first, before text and `artifact_ref`.
       - A **repository test against real Postgres** (both `chat_messages` and
-        `deployed_messages`) stores a context containing `1e3`, `1.0`, a 30-digit integer and
-        `-0`. Its read-back `canonical` is byte-identical to the input canonical string, while
-        `context` is allowed to differ. A fake repo can't catch JSONB normalization.
+        `deployed_messages`) stores a context containing `1e3`, `1.0`, a 30-digit integer,
+        `-0`, `<>&`, and a lone surrogate `"\ud800"` (which Go turns into U+FFFD at ingest,
+        before Postgres sees it). Its read-back `canonical`, decoded, is identical to the
+        ingested canonical string, while `context` is allowed to differ. A fake repo can't catch
+        JSONB normalization.
     - **Session read:** the deployed read returns the block raw. The BO view renders the
       collapsed bubble, and an older session without the block renders unchanged.
     - **Export:** a session with the block exports `context` and `rendered`, and `rendered`
@@ -256,7 +281,10 @@ history, changes what session read returns, and changes the eval export contract
       - a cross-language golden test (mechanics below) passes.
     - **Golden fixture mechanics.**
       - A Go test in `internal/eval` (`TestClientContextGoldenExport`) builds an export for a
-        session with two contexts that cover the edge cases above. It compares the YAML against
+        session with two contexts that cover the edge cases above. They also cover the
+        characters YAML treats specially but Go's JSON encoder leaves unescaped: U+0085 (NEL),
+        U+FEFF, and a long string with spaces that a YAML emitter could fold. The fixture thus
+        tests the yaml.v3 → PyYAML transport, not just the renderer. It compares the YAML against
         the committed fixture `aikdm/tests/fixtures/client_context_export.yaml`.
       - It fails when they differ, unless it runs with `-update`, which rewrites the fixture.
       - The aikdm test loads that same fixture, runs `render_user_turn` on each user message, and
@@ -289,12 +317,14 @@ history, changes what session read returns, and changes the eval export contract
 - **API: turn requests** (both routes). New optional body field
   `client_context: object | null`. The new 400 bodies are:
   - `invalid client_context: must be a JSON object`
-  - `invalid client_context: contains \u0000`
+  - `invalid client_context: contains \u0000` (literal six characters `\u0000`)
   - `client_context exceeds OPENBBC_CLIENT_CONTEXT_MAX_BYTES`
 
   All are plain text, the same as the existing `empty_turn` on these routes (`deployed.go:334`,
   `chat.go:933`). That deliberately deviates from the `{error:{code,message}}` envelope in
-  `docs/conventions/api.md`, for consistency within the turn routes. The change is additive: unknown
+  `docs/conventions/api.md`, for consistency within the turn routes. (These routes already mix
+  formats: decode errors go through `handler.Error` as `{"error":"<string>"}`. This spec
+  doesn't change that.) The change is additive: unknown
   fields are already ignored by `DecodeJSON`, so older clients are unaffected, and today's
   servers silently ignore the field from newer clients.
 - **API: session read** (`GET /deployed/{agent_id}/sessions/{session_id}`). User-message
@@ -383,6 +413,8 @@ history, changes what session read returns, and changes the eval export contract
   - `bizbok/information-map.md` (Chat message and Deployed message rows: content now includes
     `client_context`);
   - `glossary.md` (a "client context" term);
-  - `ddd/context-map.md` (the `feedback-datasets` → `evaluation` export now carries `rendered`);
+  - `ddd/context-map.md` (the `feedback-datasets` → `evaluation` row says "eval replay is
+    text-only". It should say rendered client contexts are replayed too, and that the export
+    carries `rendered`);
   - `c4/integrations.md` (turn request body);
   - wherever deployment config is documented (`OPENBBC_CLIENT_CONTEXT_MAX_BYTES`).
