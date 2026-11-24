@@ -247,3 +247,63 @@ sequenceDiagram
 ```
 
 <!-- migrated from _migration-quarantine/DESIGN.md § Phase V, ARCHITECTURE.md § Data Flow / Flow 5, PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model on 2026-09-28. Rewritten 2026-09-28 for GitHub-safe mermaid syntax. Updated 2026-10-05 for sync-multiagent-feature — RUN_FINISHED replaces TURN_END. -->
+
+## Seed export
+
+```mermaid
+sequenceDiagram
+    participant Admin as Admin BO
+    participant OBBCD as open bbcd
+    participant DB as postgres
+
+    Admin->>OBBCD: POST agent_versions id export with optional static ids and deploy marker
+    OBBCD->>DB: read version, refused with 409 unless READY, TRAINING or DEPLOYED
+    OBBCD->>DB: read closure, agent with root Inputs config, transitive sub agent versions and their agents, referenced backends
+    OBBCD->>DB: UPDATE static_id on rows that have none, supplied or generated, 409 on a conflicting supplied id
+    OBBCD->>OBBCD: replace every backend header value with a VAR placeholder, escape literal placeholders elsewhere
+    OBBCD-->>Admin: openbbc seed v1 YAML attachment plus X Seed Env Vars header listing placeholder names
+```
+
+The closure is self-contained: every reference inside the file is a static ID or backend
+name, never a UUID, so the file can be imported into an empty database. Static IDs are
+persisted in the export transaction, so exporting the same version again yields the same
+file. Backend header values never leave the instance; URLs export as-is (the export dialog
+warns that a token embedded in a URL would leak). Discovery zip, sessions, datasets, evals,
+training history and lineage are not exported.
+
+<!-- new data flow added 2026-11-24 for declarative-seed. GitHub-safe mermaid syntax per diagram conventions. -->
+
+## Boot seed import
+
+```mermaid
+sequenceDiagram
+    participant K8s as Kubernetes
+    participant OBBCD as open bbcd
+    participant DB as postgres
+    participant User as Client frontend
+
+    K8s->>OBBCD: start pod with seed ConfigMap mounted at SEED_PATH and VAR values from the env Secret
+    OBBCD->>DB: run migrations
+    OBBCD->>OBBCD: load every seed file into one seed set, validate structure and references, interpolate VAR values in backend config
+    OBBCD->>DB: BEGIN one transaction
+    OBBCD->>DB: upsert backends by name from the file, set managed flag, clear it on undeclared managed backends
+    OBBCD->>DB: per agent by static id, INSERT finalized if missing, else require identical architecture
+    OBBCD->>DB: under the agent row lock, per version by static id, INSERT as READY at the tip if missing, else leave alone and warn on a content hash mismatch
+    OBBCD->>DB: second pass, INSERT sub agent bindings for created versions with the full cycle check over the whole graph
+    alt deploy marker if_none with nothing deployed, or force with this version not yet deployed
+        OBBCD->>DB: deploy with the same singleton, READY and endpoints mapped checks as the deploy route
+    end
+    OBBCD->>DB: COMMIT, or ROLLBACK and exit non zero on any error
+    OBBCD->>OBBCD: log one line per resource, then start serving HTTP
+    K8s->>OBBCD: startupProbe on health passes
+    User->>OBBCD: POST deployed agent static id sessions
+```
+
+Nothing answers HTTP until the import has committed, so probes cannot pass on a half-seeded
+database; the chart's startup probe gives migrations plus import time before liveness
+applies. Existing agents and versions are never rewritten or deleted, so a client's own
+versions and deployment survive every restart (unless a version carries `force`), and the
+seeded version is always present to deploy or roll back to. `open-bbcd seed apply` runs the
+same import standalone against `DATABASE_URL`.
+
+<!-- new data flow added 2026-11-24 for declarative-seed. GitHub-safe mermaid syntax per diagram conventions. -->

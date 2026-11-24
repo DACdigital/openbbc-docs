@@ -59,6 +59,14 @@ subscribes to.
   removes all associated `deployed_messages`.
 - **One agent deployed per chain** (migration 011) — enforced by `agent-lifecycle`; this
   context sees only the currently-DEPLOYED version.
+- **`{agent_id}` accepts the agent's static ID.** On every `/deployed/{agent_id}/…` route
+  (including the session-scoped artifact and child-transcript routes), a value that looks
+  like a UUID (case-insensitively) is resolved by id and anything else by the agent's
+  static ID, before the route's existing logic; an unknown value is the same `404` as
+  today. Sessions stay keyed by the agent's UUID (`deployed_sessions.agent_id`), so a
+  session created via the static ID is the same session when addressed via the UUID, and
+  vice versa. Responses keep returning UUIDs. This lets a client frontend address a seeded
+  agent by a name that is the same on every cluster.
 - **Child sessions are invisible to every per-session route.**
   `GET /deployed/{agent_id}/sessions` lists root sessions only. Every per-session route
   (`GET` / `DELETE …/sessions/{id}`, `PATCH …/title`, `POST …/turn`, and all artifact and
@@ -114,12 +122,13 @@ subscribes to.
   is no assistant-emission leg. Upstream AG-UI spec is versioned separately — see
   [`../../c4/integrations.md § Contracts`](../../c4/integrations.md#contracts).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model, ARCHITECTURE.md § Agent Runtime on 2026-09-28. Updated 2026-09-30 for multiagent-tools — child sessions, STEP_* progress, caps. Updated 2026-10-01 for sync-deployed-runtime-artifacts — nested retrieval route + row allow-list, staged uploads, ARTIFACT_REF as AG-UI CUSTOM event, child refs not forwarded. Updated 2026-10-05 for sync-multiagent-feature — children invisible to every per-session route, stepName/prefixed toolCallId, RUN_FINISHED/RUN_ERROR. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 4 Headers, § 5 Auth model, ARCHITECTURE.md § Agent Runtime on 2026-09-28. Updated 2026-09-30 for multiagent-tools — child sessions, STEP_* progress, caps. Updated 2026-10-01 for sync-deployed-runtime-artifacts — nested retrieval route + row allow-list, staged uploads, ARTIFACT_REF as AG-UI CUSTOM event, child refs not forwarded. Updated 2026-10-05 for sync-multiagent-feature — children invisible to every per-session route, stepName/prefixed toolCallId, RUN_FINISHED/RUN_ERROR. Updated 2026-11-24 for declarative-seed — static agent ID accepted in {agent_id}, sessions keyed by UUID. -->
 
 ## Published surface
 
 - **REST (AG-UI-facing):** Every per-session route below resolves root sessions only (a
-  child id returns `404`).
+  child id returns `404`). On every route, `{agent_id}` may be the agent's UUID or its
+  static ID; both address the same sessions.
   - `POST /deployed/{agent_id}/sessions`
   - `GET /deployed/{agent_id}/sessions?user_id=X`
   - `GET /deployed/{agent_id}/sessions/{id}?user_id=X`
@@ -164,4 +173,4 @@ subscribes to.
   dispatched by `internal/llm/tools.Builder` via `toolBackendStoreAdapter`
   (`internal/handler/api.go:355`).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 3 MCP layer, ARCHITECTURE.md § Agent Runtime, § Protocols on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — empty-turn rule, nested artifact + pending-artifacts routes, ARTIFACT_REF as CUSTOM event. Updated 2026-10-05 for sync-multiagent-feature — child-transcript route, root-only per-session routes, event list. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 2 Integrating your frontend, § 3 MCP layer, ARCHITECTURE.md § Agent Runtime, § Protocols on 2026-09-28. Updated 2026-10-01 for sync-deployed-runtime-artifacts — empty-turn rule, nested artifact + pending-artifacts routes, ARTIFACT_REF as CUSTOM event. Updated 2026-10-05 for sync-multiagent-feature — child-transcript route, root-only per-session routes, event list. Updated 2026-11-24 for declarative-seed — {agent_id} accepts a static ID. -->

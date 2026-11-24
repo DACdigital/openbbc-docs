@@ -13,6 +13,18 @@ exposes an optional `artifacts:` values block — store groups, credentials from
 Secret, and the upload / pending / signed-URL caps — rendered as the `ARTIFACT_*` env vars;
 disabled by default.
 
+**Declarative seeding (Helm `seed:` values block, disabled by default).** When enabled, the
+seed files from `seed.files` are rendered into a ConfigMap (or an operator-managed
+`existingConfigMap` is used instead) and mounted read-only into the `open-bbcd` pod at
+`/etc/openbbc/seed`, with `SEED_PATH` pointing at it. The `${VAR}` values the seed's backend
+config references come from the Secret `open-bbcd` already reads its env from
+(`openbbcd.envFromSecret`) — there is no separate seed Secret. A `checksum/seed` pod
+annotation over the rendered files rolls the pod whenever the seed changes; an
+`existingConfigMap` cannot be checksummed and needs a manual rollout restart. `open-bbcd`
+carries a configurable `startupProbe` on `/health` so liveness cannot kill the pod while
+migrations plus the seed import run. This is how a cluster we don't operate gets a working
+agent at install time with no backoffice step.
+
 **Local dev only — not shipping:**
 - **Local Go** — `make build && ./bin/open-bbcd` with `$DATABASE_URL` pointing at Postgres.
   Migrations auto-apply on boot (goose embedded via `//go:embed`). Used by contributors
@@ -24,7 +36,7 @@ disabled by default.
   stack + running the e2e Playwright suite. **Not a production deployment path** — no
   Ingress, no drainer CronJobs, no replica story.
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1 Deploying, § 8 Known gaps, ARCHITECTURE.md § Docker deployment on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart shipped; discovery-data volume removed per mig 026). Corrected 2026-09-28 to reflect that Docker Compose and Local Go are dev-only, not shipping deployment paths. Updated 2026-10-01 for sync-deployed-runtime-artifacts — Helm `artifacts:` values block. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1 Deploying, § 8 Known gaps, ARCHITECTURE.md § Docker deployment on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (Helm chart shipped; discovery-data volume removed per mig 026). Corrected 2026-09-28 to reflect that Docker Compose and Local Go are dev-only, not shipping deployment paths. Updated 2026-10-01 for sync-deployed-runtime-artifacts — Helm `artifacts:` values block. Updated 2026-11-24 for declarative-seed — Helm `seed:` values block, ConfigMap mount, checksum roll, startupProbe. -->
 
 ## Network zones
 
@@ -33,10 +45,12 @@ disabled by default.
 - **App zone** — `open-bbcd` (`:8080`); reachable from the gateway and from the internal
   automation surface (operator, cron scripts, k8s CronJobs). Backoffice UI lives in this
   zone. No local disk state after migration 026 — the pod holds no state on its filesystem;
-  all persisted state lives in the Data zone.
+  all persisted state lives in the Data zone. The optional seed ConfigMap is a read-only
+  boot input mounted into this pod, not state.
 - **Data zone (trust boundary)** — `postgres` (`:5432`) with `postgres-data` persistent
   volume; only `open-bbcd` and (on the alpha-drainer path) `aikdm-runner`'s `seed_bundle.py`
-  reach it.
+  reach it — plus an operator running `open-bbcd seed apply` outside the pod, which needs
+  `DATABASE_URL`.
 - **Job zone** — `aikdm` (compose profile, one-shot) and `aikdm-runner` (k8s CronJob pods).
   Mounts LLM keys as Secrets; reaches `open-bbcd`'s REST + the LLM providers. The
   alpha-drainer CronJob additionally mounts `DATABASE_URL`, so that pod crosses into the
@@ -54,12 +68,12 @@ Every container in [`containers.md`](containers.md) is placed:
 | Container | Zone(s) |
 |-----------|---------|
 | [`flow-map-compiler`](containers.md#flow-map-compiler) | Discovery author's machine (outside all zones); output enters App zone via wizard upload |
-| [`open-bbcd`](containers.md#open-bbcd) | App zone |
+| [`open-bbcd`](containers.md#open-bbcd) | App zone; the `seed apply` CLI run outside the pod crosses into Data zone |
 | [`aikdm`](containers.md#aikdm) | Job zone (compose profile only) |
 | [`aikdm-runner`](containers.md#aikdm-runner) | Job zone (all three drainers); alpha drainer additionally crosses into Data zone |
 | [`postgres`](containers.md#postgres) | Data zone |
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Docker deployment, PRODUCTION.md § 1, § 6 Batch operations, § 7 Provider LLM keys on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (added aikdm-runner CronJobs; app zone stateless per mig 026; alpha drainer crosses Data zone). Updated 2026-10-07 for bifrost — Bifrost is in-process, no new zone placement. Updated 2026-10-07 for sync-bifrost — v1 key-only allow-list. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Docker deployment, PRODUCTION.md § 1, § 6 Batch operations, § 7 Provider LLM keys on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (added aikdm-runner CronJobs; app zone stateless per mig 026; alpha drainer crosses Data zone). Updated 2026-10-07 for bifrost — Bifrost is in-process, no new zone placement. Updated 2026-10-07 for sync-bifrost — v1 key-only allow-list. Updated 2026-11-24 for declarative-seed — seed ConfigMap is a boot input, `seed apply` CLI crosses into Data zone. -->
 
 ## Trust boundaries
 
@@ -80,6 +94,11 @@ Every container in [`containers.md`](containers.md) is placed:
   class as LLM provider API keys, not persisted in Postgres.
 - **Job ↔ App** — `aikdm-runner` reaches `open-bbcd` via REST for all three drainers.
   Compose-profile `aikdm` uses the same path.
+- **Deploy-time config ↔ App** — the seed ConfigMap and the `open-bbcd` env Secret are
+  written by whoever controls the Helm values and cluster Secrets, and are trusted as-is at
+  boot: the seed set can create agents and versions, take over and lock same-named
+  backends, and (with `force`) pin the deployment. Control of the release is therefore
+  control of what the cluster serves.
 
 ## Diagram
 
@@ -92,6 +111,7 @@ flowchart TB
 
     subgraph APP[App zone]
         OBBCD[open-bbcd<br/>no local disk state]
+        SEED[seed ConfigMap<br/>optional, read only]
     end
 
     subgraph JOB[Job zone]
@@ -124,6 +144,7 @@ flowchart TB
     AIKDM --> OBBCD
 
     AIKDMR_A -.->|seed_bundle| DB
+    SEED -.->|mounted at boot, SEED_PATH| OBBCD
 
     AIKDMR_A --> LLM
     AIKDMR_E --> LLM
@@ -134,7 +155,7 @@ flowchart TB
     class DATA trust
 ```
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Docker deployment, PRODUCTION.md § 1 Deploying, § 5 Auth model, § 7 Provider LLM keys on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — three CronJobs, stateless open-bbcd, alpha drainer's dashed line into Data zone. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § Docker deployment, PRODUCTION.md § 1 Deploying, § 5 Auth model, § 7 Provider LLM keys on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 — three CronJobs, stateless open-bbcd, alpha drainer's dashed line into Data zone. Updated 2026-11-24 for declarative-seed — seed ConfigMap node mounted into open-bbcd. -->
 
 ## Threat model
 
@@ -153,5 +174,9 @@ flowchart TB
 | App ↔ External integration | **Denial of service / cost amplification via sub-agent fan-out.** A crafted user turn (or a prompt-injected tool result) drives the root LLM to spawn sub-agents repeatedly, multiplying LLM calls and backend load per turn. | Topology is acyclic by construction (only `INITIALIZING`/`DRAFT` versions bind `READY`/`DEPLOYED` targets; a bind-time cycle check remains as defence in depth); `AGENT_TOOL_MAX_DEPTH` (default 3) and `AGENT_TOOL_MAX_PARALLEL` (default 4) bound fan-out per turn; gateway rate limits still apply per root turn. No per-turn token budget yet — tracked in `assumptions.md`. |
 | App ↔ External integration | **Elevation of privilege (confused deputy) via sub-agent wiring.** A sub-agent calls backends with its own version's wiring, so a caller can indirectly reach backends it is not wired to. | Bindings are admin-only BO configuration behind the backoffice network restriction; end users cannot choose targets outside the root version's allow-list. Deployed sub-agent calls use static `tool_backends.config` credentials, same as root calls; BO / eval `header_overrides` propagate only for matching backend ids. |
 | Public ↔ App | **Information disclosure via child sessions.** Worker transcripts may hold intermediate data the root answer omits. | Deployed children carry the root's `user_id` and `agent_id`, so a tree never crosses into another agent's partition. Children are excluded from the session list, every per-session route returns `404` for a child id, and child transcripts are readable only through the root-scoped child route. On the AG-UI stream, only the root's text plus the worker's tagged tool-call **and tool-result** events reach the client: no sub-agent text tokens and no child `ARTIFACT_REF`. |
+| Deploy-time config ↔ App | **Denial of service at boot from a bad seed.** A seed that fails validation, references a `${VAR}` missing from the Secret, or cannot deploy (e.g. the client left an endpoint of the seeded agent unwired) makes `open-bbcd` exit on every boot, taking the whole app down. | Deliberate fail-fast: the import is one transaction, so nothing partial persists, and the error is one clear log line naming the file and key. Run `open-bbcd seed validate --no-env` in CI (catches file errors and lists the required env var names; cannot see cluster state). The `startupProbe` keeps liveness from masking the cause. Removing or disabling the seed restores boot. |
+| Deploy-time config ↔ App | **Tampering — takeover of a client backend by name.** A seeded backend whose `name` matches a backoffice-created one overwrites its config (URL, headers) and locks it; a `force` deploy marker silently re-pins the deployment on every restart. | Documented sharp edges in the chart README; `force` is opt-in per version. Takeover is limited to backends — agents and versions are create-if-missing only and never overwritten or deleted. Managed backends are visibly locked (`409` on edit/delete), and the lock clears as soon as the seed set stops declaring them. Backend `kind` cannot be flipped by a seed. |
+| App ↔ External integration | **Information disclosure — credentials leaving in an exported seed file.** Export writes backend config into a file that travels between clusters and through Helm values. | Every `default_headers` value is exported only as a `${VAR}` placeholder and listed in `X-Seed-Env-Vars`; the real values live only in the target cluster's Secret. URLs are exported as-is, so a token embedded in a URL (e.g. a query string) would leak — the export dialog warns about it; keep credentials in headers. Secrets in `tool_backends.config` remain plaintext in the DB, as before. |
+| App ↔ Data | **Elevation of privilege — `open-bbcd seed apply` run outside the pod.** The standalone CLI writes agents, versions, backends and deployments straight to Postgres, bypassing the network restriction on the backoffice. | It needs `DATABASE_URL`, so it is a Data-zone path, the same class as the alpha drainer's `seed_bundle.py`: grant it only to operators who already hold DB credentials. It enforces the same validation, create-if-missing and deploy rules as the boot import. |
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model, § 7 Provider LLM keys, § 8 Known gaps on 2026-09-28. Updated 2026-09-28 for artifact-support — added threats for artifact-store creds, ref-based cross-user read, oversized upload. Updated 2026-09-30 for multiagent-tools — added sub-agent fan-out, confused-deputy, child-session disclosure threats. Updated 2026-10-01 for sync-deployed-runtime-artifacts — artifact ref-leak mitigation (row allow-list, staged uploads, MIME resolution, nosniff, Content-Disposition), ARTIFACT_MAX_PENDING. Updated 2026-10-05 for sync-multiagent-feature — topology acyclic by construction, child-session disclosure mitigation. Updated 2026-10-07 for bifrost — multi-provider key exposure on the Bifrost adapter. Updated 2026-10-07 for sync-bifrost — single selected key, <PROVIDER>_BASE_URL https-only mitigation. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 4 Headers, § 5 Auth model, § 7 Provider LLM keys, § 8 Known gaps on 2026-09-28. Updated 2026-09-28 for artifact-support — added threats for artifact-store creds, ref-based cross-user read, oversized upload. Updated 2026-09-30 for multiagent-tools — added sub-agent fan-out, confused-deputy, child-session disclosure threats. Updated 2026-10-01 for sync-deployed-runtime-artifacts — artifact ref-leak mitigation (row allow-list, staged uploads, MIME resolution, nosniff, Content-Disposition), ARTIFACT_MAX_PENDING. Updated 2026-10-05 for sync-multiagent-feature — topology acyclic by construction, child-session disclosure mitigation. Updated 2026-10-07 for bifrost — multi-provider key exposure on the Bifrost adapter. Updated 2026-10-07 for sync-bifrost — single selected key, <PROVIDER>_BASE_URL https-only mitigation. Updated 2026-11-24 for declarative-seed — boot denial of service from a bad seed, backend takeover by name, export credential leak via URLs, seed apply CLI as a Data-zone path. -->

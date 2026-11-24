@@ -90,17 +90,30 @@ at boot by `OPENBBC_LLM_ADAPTER`:
 The Bifrost adapter is meant to be the single place where new providers are added; future
 providers should not get their own per-provider `llm.LLM` implementations.
 
+**Boot sequence.** `serve` runs migrations, then the **seed import** when `SEED_PATH` is set
+(a seed file or a directory of them, merged into one seed set), and only then starts
+serving HTTP — so `/health` does not answer until the import has finished. The import runs
+in one Postgres transaction: it upserts managed backends from the file, creates missing
+agents and versions (leaving existing ones alone) and applies deploy markers. Any error
+(validation, missing `${VAR}`, failed deploy precondition, DB error) exits the process
+non-zero, so a bad seed shows up as a crash loop with the error in the log. With
+`SEED_PATH` unset the only seed-related write is clearing the managed flag on every
+backend.
+
 **Tech stack.** Go 1.27+, `database/sql` + `lib/pq`, `html/template` + htmx (server-rendered,
 no SPA; entrypoint `internal/handler/api.go:194`), `goose` migrations embedded via
 `//go:embed`. LLM adapters: `anthropic-sdk-go` (direct) and the Bifrost Go SDK
 (`github.com/maximhq/bifrost/core`, in-process; must build with CGO off). Multi-stage, multi-arch Docker image (`golang:1.27` builder,
 `gcr.io/distroless/static-debian12:nonroot` runtime, CGO off). Binary subcommands: `serve`
-(default), `migrate`, `healthcheck`.
+(default), `migrate`, `healthcheck`, `seed validate [--no-env] <path>` (structural
+validation and `${VAR}` interpolation, no DB; `--no-env` prints the required env var names
+for CI) and `seed apply <path>` (full import against `DATABASE_URL`, standalone).
 
 **Data ownership.** Owns everything in `postgres` transactionally on behalf of the DDD
-contexts: `agents` (+ `discovery_zip BYTEA` migration 026), `agent_versions` (`status ∈
-{INITIALIZING, PENDING, DRAFT, TRAINING, READY, DEPLOYED}` per migration 025),
-`capabilities[]`, `tool_backends`, `agent_endpoint_backend`, `agent_version_mcp_backend`,
+contexts: `agents` (+ `discovery_zip BYTEA` migration 026, write-once `static_id`),
+`agent_versions` (`status ∈ {INITIALIZING, PENDING, DRAFT, TRAINING, READY, DEPLOYED}` per
+migration 025, write-once `static_id`), `capabilities[]`, `tool_backends` (+
+`managed_by_seed`), `agent_endpoint_backend`, `agent_version_mcp_backend`,
 `agent_version_subagent` (+ `agent_versions.agent_tool_enabled`),
 `chat_sessions` + `chat_messages` + `chat_session_artifacts` (migration 027) +
 `chat_message_feedback`, `datasets` + `dataset_versions` + `dataset_version_sessions`,
@@ -119,11 +132,16 @@ The artifact-store registry is held in-memory only, hydrated at boot from env va
 embedded in message-content JSONB and per-session artifact metadata rows
 (`chat_session_artifacts` / `deployed_session_artifacts`), never blob bytes, store
 configuration or credentials. With the registry disabled, raw tool output (possibly carrying
-base64 media) is persisted as before.
+base64 media) is persisted as before. Seed files are read-only input (a mounted ConfigMap);
+`open-bbcd` never writes them.
 
 **Published API / events.**
 - REST (JSON): `/evals/*`, `/training-sessions/*`, `/datasets/*`, `/agents/*/deploy`,
-  `/agents/*/undeploy`, `/mcp*`, `/deployed/{agent_id}/sessions[/*]`, `/health`.
+  `/agents/*/undeploy`, `/mcp*`, `/deployed/{agent_id}/sessions[/*]`, `/health`. Deploy,
+  undeploy and `/deployed/{agent_id}/…` accept an agent (and, for deploy, version) static
+  ID wherever they accept a UUID.
+- Seed export: `POST /agent_versions/{version_id}/export` → `openbbc-seed-v1` YAML.
+- Seed import input: `SEED_PATH` at boot and the `seed` CLI subcommands (above).
 - Backoffice UI: `/`, `/agents/ui`, `/agents/new`, `/agents/{id}/configure/*`,
   `/agent_versions/{id}/configure/*`, `/mcp`, `/datasets*`, `/evals`,
   `/training-sessions`, `/agent_versions/{v}/chat[/{s}/*]`.
@@ -139,7 +157,7 @@ base64 media) is persisted as before.
 
 **Modularity node.** ARCH_GAP (populated later by `/modularize`).
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. Updated 2026-09-30 for multiagent-tools — in-process agent tool, agent_version_subagent, child sessions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — chat_session_artifacts + deployed_session_artifacts owned; bytes invariant scoped to an enabled registry; artifacts context is an env-hydrated registry (no store-config CRUD). Updated 2026-10-05 for sync-multiagent-feature — orchestrator owns agent-tool injection and dispatch, child-session columns (migration 029). Updated 2026-10-07 for bifrost — env-selected LLM adapter, embedded Bifrost Go SDK. Updated 2026-10-07 for sync-bifrost — v1 provider allow-list, Go 1.27 / golang:1.27 builder. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § open-bbcd, § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Docker deployment, DESIGN.md § Tech Stack, PRODUCTION.md § 1 Deploying on 2026-09-28. Updated 2026-09-28 for artifact-support — data ownership now includes artifact_stores config + adapter dispatch; artifact bytes live externally. Updated 2026-09-30 for multiagent-tools — in-process agent tool, agent_version_subagent, child sessions. Updated 2026-10-01 for sync-deployed-runtime-artifacts — chat_session_artifacts + deployed_session_artifacts owned; bytes invariant scoped to an enabled registry; artifacts context is an env-hydrated registry (no store-config CRUD). Updated 2026-10-05 for sync-multiagent-feature — orchestrator owns agent-tool injection and dispatch, child-session columns (migration 029). Updated 2026-10-07 for bifrost — env-selected LLM adapter, embedded Bifrost Go SDK. Updated 2026-10-07 for sync-bifrost — v1 provider allow-list, Go 1.27 / golang:1.27 builder. Updated 2026-11-24 for declarative-seed — boot-time seed import after migrations and before serving, seed validate/apply subcommands, export route, static IDs in routes, static_id + managed_by_seed columns. -->
 
 ### aikdm {#aikdm}
 
