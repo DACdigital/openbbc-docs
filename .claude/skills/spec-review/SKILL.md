@@ -18,7 +18,7 @@ dimensions that don't apply to the change are marked N/A.
 
 Runs in either of two modes, decided by whether a spec PR exists:
 
-- **pre-push mode** (no PR yet) — how `/new-spec` step 11 invokes it. The verdict comes back into
+- **pre-push mode** (no PR yet) — how `/new-spec` step 10 invokes it. The verdict comes back into
   the calling session and gates the push; there is nothing to comment on.
 - **on-PR mode** (open PR found) — invoked by hand on an already-open spec PR, e.g. after the
   author pushed a fix. A passing verdict is commented; a `FAIL` still is not.
@@ -32,8 +32,9 @@ Runs in either of two modes, decided by whether a spec PR exists:
 ## Steps
 
 1. **Locate the spec PR** for `<name>` (the open PR that adds/modifies a file matching
-   `docs/superpowers/specs/*-<name>-design.md`). None found → pre-push mode; carry on without
-   one.
+   `docs/superpowers/specs/*-<name>-design.md`), using the `gitHost` client obtained per
+   [Client resolution](../../../docs/process/README.md#client-resolution). None found → pre-push mode; carry on
+   without one.
 2. **Invoke the `spec-review` subagent** (`.claude/agents/spec-review`) against the resolved
    `docs/superpowers/specs/*-<name>-design.md` file, `docs/process/AGENTS.md`, and the full
    `docs/conventions/` (naming, architecture, api, persistence, events). The agent produces one
@@ -41,11 +42,11 @@ Runs in either of two modes, decided by whether a spec PR exists:
 3. **Route the verdict** per `docs/process/AGENTS.md` — a `FAIL` verdict is never posted:
    - **`FAIL`** → report the verdict and its full findings to the author in this session, verbatim.
      Post no PR comment and send no comms notification. In pre-push mode this also blocks the push
-     (`/new-spec` step 11). Do not edit the spec to satisfy the findings — the author decides.
+     (`/new-spec` step 10). Do not edit the spec to satisfy the findings — the author decides.
    - **`PASS` / `PASS_WITH_ISSUES`** → post the verdict plus sub-verdict lines and findings as a
      comment on the spec PR from step 1, and report it in-session as well. In pre-push mode there
      is no PR yet, so the caller MUST post the verdict verbatim as the new PR's first comment as
-     soon as it opens one (`/new-spec` step 11) — a passing pre-push verdict is still a posted
+     soon as it opens one (`/new-spec` step 10) — a passing pre-push verdict is still a posted
      verdict, just posted by the caller a moment later.
 
    Do not commit anything to the repo — a PR comment is the only artifact this command ever leaves
@@ -60,10 +61,12 @@ Runs in either of two modes, decided by whether a spec PR exists:
    `Recommended next step: after this spec merges, run /arch-review <name> to sync docs/architecture/current/ with the approved spec. It is optional and exits IN SYNC if there is no drift.`
    Do not run `/arch-review` automatically — sync is a manual, post-approval step (see
    `.claude/skills/arch-review/SKILL.md`).
-6. If a comms channel is configured **and** the verdict was `PASS` or `PASS_WITH_ISSUES`, post a
-   short notification with the verdict. A `FAIL` notifies nobody.
+6. If a comms channel is configured **and** the verdict was `PASS` or `PASS_WITH_ISSUES`, obtain
+   the `comms` client per [Client resolution](../../../docs/process/README.md#client-resolution) and post a short
+   notification with the verdict. A `FAIL` notifies nobody.
 
 ## Config
 
-Reads `.claude/tracker.json` → `comms` (optional notification only). Does not read `tracker` or
-`gitHost` — posting to this repo's own PR uses its own git remote, not a service repo or the tracker.
+Reads `.claude/tracker.json` → `gitHost` (the docs repo lives on `gitHost`; used to find the spec
+PR and post the verdict comment) and `comms` (optional notification only). Clients for both roles
+are obtained per [Client resolution](../../../docs/process/README.md#client-resolution). Does not read `tracker`.

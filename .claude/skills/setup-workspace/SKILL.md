@@ -20,18 +20,23 @@ None required — interactive, repeated per repo. Reads `.claude/tracker.json` �
 `/setup-project` first if `gitHost` is missing or a placeholder. Optional `--refresh` argument: skip
 provisioning; only re-index repos already cloned under `workspace/`.
 
-A configured **GitLab MCP** (any org) is a **soft dependency** for template discovery against
-`gitlab.dac.digital/dacdigital/starter-packs`. If it is missing or unreachable, the skill warns once
-and falls back to today's manual URL flow. GitLab discovery runs regardless of `gitHost`.
+A **GitLab client for the template host** (`https://gitlab.dac.digital`), obtained per
+[Client resolution](../../../docs/process/README.md#client-resolution) with that host as the instance, is a **soft
+dependency** for template discovery against `gitlab.dac.digital/dacdigital/starter-packs`. When
+`gitHost` is that same instance, it is the `gitHost` client; otherwise it is resolved in memory and
+not saved. If no such client is found or it is unreachable, the skill warns once and falls back to
+today's manual URL flow. GitLab discovery runs regardless of `gitHost`.
 
 ## Steps
 
-1. **Read `.claude/tracker.json` → `gitHost`** (platform, org). If missing or a placeholder, stop and
-   tell the user to run `/setup-project` first.
-2. **Build the template catalog (once per run).** If a GitLab MCP is configured and reachable, list
-   projects in the `dacdigital/starter-packs` group. For each project, fetch: name, description, and
-   `README.md`. Cache all three in memory as the run's **template catalog**. If GitLab MCP is missing,
-   the group is unreachable, or the group is empty, warn once —
+1. **Read `.claude/tracker.json` → `gitHost`** (platform, instanceUrl, org). If missing or a
+   placeholder, stop and tell the user to run `/setup-project` first. Otherwise obtain the `gitHost`
+   client per [Client resolution](../../../docs/process/README.md#client-resolution); every repo-creation step below
+   uses it.
+2. **Build the template catalog (once per run).** If a GitLab client for the template host is
+   available (see Inputs), list projects in the `dacdigital/starter-packs` group. For each project,
+   fetch: name, description, and `README.md`. Cache all three in memory as the run's **template
+   catalog**. If there is no such client, the group is unreachable, or the group is empty, warn once —
    `starter-packs unavailable — falling back to manual URLs` — and continue with an empty catalog.
    Discovery runs regardless of the project's target `gitHost`; the starter-packs group is the org's
    cross-host template library. Skip this step when `--refresh` was passed.
@@ -49,10 +54,10 @@ and falls back to today's manual URL flow. GitLab discovery runs regardless of `
      existing | s skip`. If the catalog is empty, the prompt collapses to `t | x | e | s`.
    - **Routes:**
      - **New from template** (`Enter`, `<n>`, or `t <URL>`) — instantiate a new repo from the
-       chosen template. Same-host with native "use as template" / fork support: prefer the platform
-       API. Cross-host or no native support: shallow-clone the template locally, create the target
-       repo on `gitHost`, repoint `origin`, squash-push a single `Init from template <template-name>`
-       commit (template history is dropped intentionally).
+       chosen template. Same-host with native "use as template" / fork support: prefer the platform's
+       own template / fork operation. Cross-host or no native support: shallow-clone the template
+       locally, create the target repo on `gitHost`, repoint `origin`, squash-push a single
+       `Init from template <template-name>` commit (template history is dropped intentionally).
      - **New from exemplar** (`x <URL>`) — ask for an existing repo to learn from; create an empty
        target repo, then copy across only high-level config extracted from the exemplar (see next
        step).
@@ -103,4 +108,6 @@ and falls back to today's manual URL flow. GitLab discovery runs regardless of `
 
 ## Config
 
-Reads `.claude/tracker.json` → `gitHost` (platform + org). Does not touch `tracker` or `comms`.
+Reads `.claude/tracker.json` → `gitHost` (platform, instanceUrl, org); the `gitHost` client is
+obtained per [Client resolution](../../../docs/process/README.md#client-resolution). Does not touch `tracker` or
+`comms`.

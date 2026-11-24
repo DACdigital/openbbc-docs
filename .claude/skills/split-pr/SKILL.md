@@ -105,23 +105,22 @@ what the other branch therefore lacks; never split its hunks.
    first` and exit. **Never provision the checkout** — this skill does not clone, fetch or invoke
    `/setup-workspace`; setting the workspace up is the user's call.
 
-   Read `gitHost.platform` and `gitHost.apiUrl` from the **invoking** directory's
+   Read `gitHost.platform` and `gitHost.instanceUrl` from the **invoking** directory's
    `.claude/tracker.json`, falling back to the resolved repo's own. **If neither has one, do not
    fail** — the run proceeds without a host, exactly as `--local` does, and `<pr-url>` is rejected
    with `no gitHost configured`.
 
-   **Then resolve a client for that host, and check it points at the right instance.** Every host
-   operation below — steps 2, 11 and 12 — goes through whatever client this environment provides
-   for `gitHost.platform`: an MCP server, a CLI (`glab`, `gh`, …), or the platform's REST API
-   directly. Take whichever is available and authenticated; the skill does not care which, and no
-   step below should name one.
+   **Then obtain the `gitHost` client per [Client resolution](../../../docs/process/README.md#client-resolution).** Every
+   host operation below — steps 2, 11 and 12 — goes through it; the skill does not care which tier
+   it came from, and no step below should name one. When the config came from the resolved repo's
+   own `tracker.json`, resolution runs in memory and writes nothing to that repo.
 
-   **`gitHost.apiUrl` is the test, not the platform name.** A client authenticated against a
-   different instance of the same platform is not a usable adapter — a GitLab MCP pointed at
-   `gitlab.com` cannot see a project on a self-hosted GitLab, and will fail in ways that read like
-   a missing project rather than a wrong endpoint. Confirm the client targets `gitHost.apiUrl`
-   before relying on it, and if none does, say which clients you found and what host each is bound
-   to rather than reporting the project as unreachable.
+   **`gitHost.instanceUrl` is the test, not the platform name** — that is Client resolution's
+   instance check. A client authenticated against a different instance of the same platform is not
+   a usable adapter — a GitLab client pointed at `gitlab.com` cannot see a project on a self-hosted
+   GitLab, and will fail in ways that read like a missing project rather than a wrong endpoint. If
+   resolution finds no usable client, report what it lists — each client found and the host it is
+   bound to — rather than reporting the project as unreachable.
 
    **Publishing is decided here and only here:** a host is in play when one is configured and
    `--local` was not passed. That decision is independent of whether an original PR exists —
@@ -187,7 +186,8 @@ what the other branch therefore lacks; never split its hunks.
    once (`no parent ticket — splitting code only`) and skip steps 5, 10 and every tracker mention in
    step 11. A missing ticket is not an error; it makes this a pure code split.
 
-   Otherwise fetch the ticket and its **existing** sub-issues via the tracker adapter:
+   Otherwise fetch the ticket and its **existing** sub-issues via the tracker adapter, with the
+   `tracker` client obtained per [Client resolution](../../../docs/process/README.md#client-resolution):
    - **Plane** — resolve `<id>` to a work-item UUID, then `workitem list` the project and keep the
      items whose `parent` equals it. **Filter client-side**: `pql='childOf("PROJ-N")'` and
      `retrieve_by_identifier` both fail on some editions (`PQL and structured filters are not
@@ -398,9 +398,14 @@ what the other branch therefore lacks; never split its hunks.
     With a host and no `--local`, open the MRs even when there is no original — that is the whole
     point of running this on a branch you deliberately never opened a PR for.
 
-    Each body lists the group's paths and states its position in the chain (`2 of 5`), and links
-    the parent PR/MR **when there is one**. With no original, say in the summary that the chain has
-    no parent PR, so nobody hunts for a link that was never going to exist.
+    **Every body opens with its links, before anything else.** First line: the parent ticket from
+    step 4 — `Parent: [<ID>](<url>)`, using the ticket's web URL from the tracker read, never a bare
+    id. Second line: the original PR/MR — `Split from: <url>`. Omit either line when there is
+    nothing to link rather than writing a placeholder; with no original PR, say so in the run
+    summary instead, so nobody hunts for a link that was never going to exist.
+
+    Below the links, each body lists the group's paths and states its position in the chain
+    (`2 of 5`).
 
     **Reference the tracker id; only use a closing keyword when the host can honour it.** A
     closing keyword works only when the ticket lives in the same host that owns the PR — GitHub
@@ -444,13 +449,14 @@ what the other branch therefore lacks; never split its hunks.
 
 ## Config
 
-Reads `.claude/tracker.json` → `gitHost.platform` and `gitHost.apiUrl` (which together pick and
-validate the host client used in steps 2, 11 and 12 — see step 1; `apiUrl` is what distinguishes a
-self-hosted instance from the platform's public one, so it is load-bearing rather than
-informational) and `tracker.platform` (to read the parent ticket and its sub-issues in step 4,
+Reads `.claude/tracker.json` → `gitHost.platform` and `gitHost.instanceUrl` (which together pick
+and validate the host client used in steps 2, 11 and 12 — see step 1; `instanceUrl` is what
+distinguishes a self-hosted instance from the platform's public one, so it is load-bearing rather
+than informational) and `tracker.platform` (to read the parent ticket and its sub-issues in step 4,
 and — compared against `gitHost.platform` — to decide in step 11 whether a closing keyword is
 possible at all). The target branch is **not** configured — it comes from the PR itself or from the
-repo's default branch, so no new config key is introduced.
+repo's default branch, so no new config key is introduced. Clients for both roles are obtained
+per [Client resolution](../../../docs/process/README.md#client-resolution).
 
 The two platforms are configured independently and frequently differ — a standalone tracker against
 repos on a separate host is a common setup, and no PR/MR can auto-close a ticket under it. Read both

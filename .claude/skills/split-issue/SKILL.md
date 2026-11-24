@@ -49,13 +49,14 @@ single writer.
 
 ### Normal mode (no `--refine`)
 
-1. **Resolve tracker platform** from `.claude/tracker.json` → `tracker.platform`.
+1. **Resolve tracker platform** from `.claude/tracker.json` → `tracker.platform`, and obtain the
+   `tracker` client per [Client resolution](../../../docs/process/README.md#client-resolution).
 2. **Fetch the issue** via the tracker adapter — title, description, existing sub-issues (if any).
 3. **Refuse-with-hint on existing sub-issues.** If the issue already has sub-issues, print
    `use --refine to modify existing sub-issues` and exit.
-4. **Fetch PR context** — if `--pr` was passed, fetch the PR's file list and summary through
-   whatever client this environment provides for `gitHost.platform`: an MCP server, a CLI (`glab`,
-   `gh`, …), or the REST API. Check it targets `gitHost.apiUrl` — a client bound to the platform's
+4. **Fetch PR context** — if `--pr` was passed, obtain the `gitHost` client per
+   [Client resolution](../../../docs/process/README.md#client-resolution) and fetch the PR's file list and summary. Its
+   instance check against `gitHost.instanceUrl` matters here — a client bound to the platform's
    public instance cannot see a self-hosted project, and fails as though the project were missing.
    On failure, warn and continue without PR grounding.
 5. **Auto-propose N sub-issues.** Based on issue description + optional PR context, propose N
@@ -126,11 +127,13 @@ do not re-ask, do not reorder.
 
 ## Config
 
-Reads `.claude/tracker.json` → `tracker.platform` (for the tracker adapter) and `gitHost.platform`
-and `gitHost.apiUrl` (which pick and validate the host client used when `--pr` is passed — see
-normal-mode step 4). **Writes only to the tracker and to nothing under `docs/`.** Enforcing this is
-the design principle from
-`docs/superpowers/specs/2026-08-12-reactive-issue-splitting-design.md` — do not reintroduce any
+Reads `.claude/tracker.json` → `tracker` (for the tracker adapter) and `gitHost.platform` and
+`gitHost.instanceUrl` (which pick and validate the host client used when `--pr` is passed — see
+normal-mode step 4). Clients for both roles are obtained per
+[Client resolution](../../../docs/process/README.md#client-resolution). **Writes only to the tracker and to
+nothing under `docs/`.** Enforcing this is the design principle from
+the template repo's design history (`docs/superpowers/specs/2026-08-12-reactive-issue-splitting-design.md`
+in `dac-docs-template`) — do not reintroduce any
 promote-to-tree flow.
 
 **`--dry-run` is a hard guarantee, not a courtesy.** It exists because `/split-pr` chains into this

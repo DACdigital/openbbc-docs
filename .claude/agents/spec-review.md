@@ -76,11 +76,11 @@ architecture. Otherwise judge on:
 - **Capabilities & value streams** (`bizbok/capabilities.md`, `bizbok/value-streams.md`). Does
   the spec add or change a business capability, or introduce/rewire a user journey? If yes,
   do `bizbok/capabilities.md` and/or `bizbok/value-streams.md` reflect it? A spec that
-  introduces a new capability or journey without a paired `/new-feature` update is a
+  introduces a new capability or journey without a paired `/arch-change` update is a
   finding — the arch drift is real.
 - **Bounded contexts** (`ddd/context-map.md`, `ddd/contexts/<name>.md`). Which context(s) does
   this feature touch or introduce? Does it respect existing boundaries per `ddd/context-map.md`?
-  A new context requires a paired `/new-feature` first.
+  A new context requires a paired `/arch-change` first.
 - **Information concepts** (`bizbok/information-map.md`, `glossary.md`). Does the spec introduce
   or rename a data concept? If yes, does `bizbok/information-map.md` + `glossary.md` name it?
 - **Actors & access model** (`bizbok/stakeholders.md`, `ddd/access-model.md`). Does the spec
@@ -138,7 +138,7 @@ so directly under the overall verdict.
 
 In particular, if the spec's Architecture rubric finds capability / context / information-concept
 / access / container / deployment drift against `docs/architecture/current/` that would require
-a `/new-feature` arch PR to reconcile, escalate to C2 and state so explicitly — the spec cannot
+an `/arch-change` arch PR to reconcile, escalate to C2 and state so explicitly — the spec cannot
 land before the arch is updated.
 
 ## Verdict policy
@@ -149,7 +149,7 @@ land before the arch is updated.
   not testable; internal contradictions that change meaning; a bounded-context boundary broken; data
   ownership placed in the wrong service; a disallowed dependency direction; tenant isolation unclear
   or violated; undeclared arch drift on any of capability / context / information-concept / access /
-  container / deployment / integration lens files that would require `/new-feature` to reconcile;
+  container / deployment / integration lens files that would require `/arch-change` to reconcile;
   a breaking API/event change with no migration or versioning path; a data-loss-risk or
   irreversible migration with no rollback plan.
 - **PASS_WITH_ISSUES** — the spec is understandable, correctly scoped, and architecturally + contract-

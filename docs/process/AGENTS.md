@@ -25,6 +25,9 @@ A spec missing any of these sections is incomplete and must not pass `/spec-revi
 
 ## Hard rules
 
+- **New implementation plans are never committed, in any repo.** A plan, such as the output of
+  `superpowers:writing-plans`, is a local working note. In this repo it lives under the gitignored
+  `docs/superpowers/plans/`. Specs, issues and MR descriptions do not link to a plan.
 - **Ambiguous change level → pick the higher one.** If it is unclear whether a change is C0/C1 or C1/C2,
   classify it at the higher level.
 - **A reviewer can raise the level, never lower it.** `/spec-review` (the single unified gate) may
@@ -46,9 +49,13 @@ A spec missing any of these sections is incomplete and must not pass `/spec-revi
   returns `PASS` or `PASS_WITH_ISSUES` — `/new-spec` runs it locally as a pre-push gate, and on
   `FAIL` the push does not happen, no PR is opened, nothing is posted anywhere, and the author
   gets the findings in the session to fix and retry. Once it passes, the PR opens **ready for
-  review** carrying that verdict as its first comment. `/arch-log-review` (for branches touching
-  `docs/architecture/current/`) still runs on the PR because it reviews a PR diff — a `FAIL`
-  there follows the same rule and is not posted.
+  review** carrying that verdict as its first comment.
+- **The arch-log gate runs before the push.** `/arch-change` runs `/arch-log-review` in pre-push
+  mode against the local branch diff with the same rule: on `FAIL` nothing is pushed or posted; on
+  pass the arch PR opens carrying that verdict as its first comment. Branches touching
+  `docs/architecture/current/` not opened by `/arch-change` (standalone `/modularize`,
+  `/arch-review` sync, manual edits) run it on-PR by hand; a `FAIL` there is
+  not posted either.
 - **Architecture changes require a log entry.** Any PR that modifies `docs/architecture/current/`
   must add a new `docs/architecture/logs/YYYY-MM-DD-<codename>/README.md` in the same PR, with all
   required fields (Driver / Decision / Rationale / Alternatives rejected / Impact / Links) present.
@@ -60,7 +67,7 @@ A spec missing any of these sections is incomplete and must not pass `/spec-revi
   must exist in `docs/architecture/logs/`. `/check-setup` reports the absence of any required
   file, any unfilled `ARCH_GAP` marker, or any dangling cross-reference as a fail.
 - **Docs → tracker / service repos is the only allowed direction of influence.** Skills that
-  operate in the docs repo (`/modularize`, `/plan-sprint`, `/new-feature`, `/new-spec`, `/create-issues`) may
+  operate in the docs repo (`/modularize`, `/plan-sprint`, `/arch-change`, `/new-spec`, `/create-issues`) may
   read docs state and write to `docs/` and/or the tracker. Skills that respond to *implementation*
   concerns (`/split-issue`, service-repo automation) may read tracker/PR/service-repo state but
   MUST NOT write to `docs/`. The master plan (`docs/`) shapes execution; execution never mutates
@@ -68,7 +75,7 @@ A spec missing any of these sections is incomplete and must not pass `/spec-revi
 - **Do not suggest `/roadmap-sync` outside planning.** `/roadmap-sync` is a planning-time
   reconciliation command — invoke it inside `/plan-sprint`, at sprint open/close, or when the
   user explicitly asks. Never suggest it as a follow-up to `/new-spec`, `/create-issues`,
-  `/new-feature`, `/spec-review`, `/arch-review`, or any other feature-scoped work. Those flows
+  `/arch-change`, `/spec-review`, `/arch-review`, or any other feature-scoped work. Those flows
   already write the ROADMAP columns they own; a proactive `/roadmap-sync` suggestion pushes the
   user toward a planning operation from a non-planning context. `/status` may point at it as a
   hint when the user is actively looking at stale numbers — that is a diagnostic, not a
@@ -109,4 +116,4 @@ A spec missing any of these sections is incomplete and must not pass `/spec-revi
   `ARCH_GAP` markers, quarantines unmatched content in
   `docs/architecture/current/_migration-quarantine/`, and never invents content the source
   did not have. (Ordinary feature-driven edits to already-schema-shaped files via
-  `/new-feature` are the normal path and are unaffected.)
+  `/arch-change` are the normal path and are unaffected.)

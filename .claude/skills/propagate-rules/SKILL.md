@@ -32,12 +32,15 @@ the repos exist locally.
    - the repo/language-specific rules from step 2.
 4. **Merge, don't clobber.** If the repo already has `AGENTS.md` / `CLAUDE.md` / `.claude` content,
    append and reconcile rather than overwrite; preserve the team's existing rules.
-5. **Deliver via PR.** Write the changes on a branch in `workspace/<repo>/` and open a code PR on the
-   git host for human review/merge. A freshly-created, empty greenfield repo (no history to review
-   against) may commit directly to its default branch instead.
+5. **Deliver via PR.** Write the changes on a branch in `workspace/<repo>/`, push it, and open a code
+   PR against the repo's default branch with the `gitHost` client, obtained per
+   [Client resolution](../../../docs/process/README.md#client-resolution), for human review/merge. A
+   freshly-created, empty greenfield repo (no history to review against) may commit directly to its
+   default branch instead.
 6. **Report** one line per repo: the PR URL (or a direct-commit note) and whether rules were merged into
    existing ones or newly created.
 
 ## Config
 
-Reads `.claude/tracker.json` → `gitHost`. Does not touch `tracker` or `comms`.
+Reads `.claude/tracker.json` → `gitHost`; the `gitHost` client is obtained per
+[Client resolution](../../../docs/process/README.md#client-resolution). Does not touch `tracker` or `comms`.

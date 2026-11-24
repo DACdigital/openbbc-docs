@@ -22,8 +22,10 @@ nothing; if the numbers look stale, run `/roadmap-sync` first.
 1. **Read `ROADMAP.md`** for the feature list (or just `<name>` if given) and each row's `Issues`/
    `Milestone`/`Link` values.
 2. **Spec state**: check whether a file matches `docs/superpowers/specs/*-<feature>-design.md`
-   and whether its PR is open, has verdicts posted, or is merged (draft / in review / merged).
-3. **Branch on `tracker.platform`** to pull live counts for the row's linked items:
+   and whether its PR is open, has verdicts posted, or is merged (draft / in review / merged), using
+   the `gitHost` client obtained per [Client resolution](../../../docs/process/README.md#client-resolution).
+3. **Branch on `tracker.platform`** to pull live counts for the row's linked items, using the
+   `tracker` client obtained per [Client resolution](../../../docs/process/README.md#client-resolution):
    - **plane** → work-item states under the feature's epic; cycle progress if a cycle is linked.
    - **github** → issue/sub-issue open/closed counts; milestone progress if one is linked.
    - **gitlab** → issue open/closed counts under the epic; milestone progress if one is linked.
@@ -32,5 +34,7 @@ nothing; if the numbers look stale, run `/roadmap-sync` first.
 
 ## Config
 
-Reads `.claude/tracker.json` → `tracker` (platform, org, projectId) to select the adapter in step 3.
-Does not read `gitHost` or `comms`. Writes nothing — this command is read-only.
+Reads `.claude/tracker.json` → `tracker` (platform, instanceUrl, org, projectId) to select the
+adapter in step 3; the `tracker` client is obtained per [Client resolution](../../../docs/process/README.md#client-resolution).
+Reads `gitHost` (platform, instanceUrl) for the spec-PR state in step 2. Does not read `comms`. Writes
+nothing but its own `.claude/clients.local.json` entries — otherwise read-only.
