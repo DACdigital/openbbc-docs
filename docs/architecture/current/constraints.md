@@ -87,13 +87,34 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
   self-binding) is also refused at the repo layer, as defence in depth. Because targets are
   pinned `agent_version_id`s, the graph is static. A version forked from a caller (prompt
   save, land, training complete) copies its config but has no incoming edges, so it cannot
-  introduce a cycle.
+  introduce a cycle. **Seed-import exception:** the boot import (and `open-bbcd seed apply`)
+  binds sub-agents on `READY` callers. It may do so only for versions created by that
+  import, only inside the import transaction, and only after every version in the seed set
+  exists; each binding runs the full bind-time checks plus a cycle check over the **whole
+  DB graph** in that transaction. A `READY` version thus gains bindings only at the moment
+  it is created, and acyclicity still holds.
 - **Sub-agent targets must be `READY` or `DEPLOYED` at bind time.** `INITIALIZING`,
   `PENDING`, `DRAFT`, and `TRAINING` versions cannot be bound. A target does **not** need
   to be `DEPLOYED` — workers may never be user-facing. The pinned id is never re-resolved
   at call time. Agent-tool config (the checkbox and every binding) is writable only while
   the caller version is `INITIALIZING` or `DRAFT`. On any later status it is frozen and
   writes return `409`.
+- **Agent versions are immutable outside `INITIALIZING`/`DRAFT`.** Enforced at the
+  repository layer for every writer; the only write on a `PENDING` version is alpha landing.
+  New versions always append at the agent's tip (`parent_version_id` = previous in
+  history), so the chain stays strictly linear.
+- **Static IDs** (`agents.static_id`, `agent_versions.static_id`) match
+  `^[a-z0-9][a-z0-9._-]{0,99}$`, must not match the UUID pattern (dashed or 32-hex), are
+  unique per table (versions globally, not per agent), and are write-once. The same rule is
+  enforced in the validator, the DB and the route resolver, so any route value is
+  unambiguously a UUID or a static ID.
+- **Seed import is all-or-nothing at boot.** `SEED_PATH` (file or non-recursive directory of
+  `*.yaml`/`*.yml`, lexical order, merged into one set; duplicate keys across files are an
+  error) is imported in a single transaction after migrations and before serving. Any
+  error exits `open-bbcd` non-zero. Seed files use the versioned `openbbc-seed-v1` format;
+  an unknown `format` value or unknown key is an error; `${VAR}` interpolation applies only
+  to string values under backend `config` (a missing variable is an error, `$${` escapes).
+  Like migrations, the import assumes a single `open-bbcd` replica.
 - **`ARTIFACT_MAX_UPLOAD_MB` env var caps per-artifact upload size.** No default is shipped
   — deployers set this explicitly at install time (rationale: any single default would be
   wrong for either text-heavy or media-heavy deployments). Enforced at the upload boundary
@@ -133,4 +154,4 @@ classes (see [`nfrs.md § Compliance`](nfrs.md#compliance) and
   minutes) balances CDN-cacheable link lifetime against replay risk. Ignored by adapters
   whose `PreferredDelivery()` is `Bytes` (proxied read).
 
-<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. Updated 2026-09-30 for multiagent-tools — added AGENT_TOOL_MAX_DEPTH, AGENT_TOOL_MAX_PARALLEL, DAG topology rule, target-status rule. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028, nested upload paths, ARTIFACT_MAX_PENDING, bytes rule scoped to an enabled registry. Updated 2026-10-05 for sync-multiagent-feature — migration head 029, AGENT_TOOL_MAX_* validation, DAG acyclic by construction, config frozen outside INITIALIZING/DRAFT. Updated 2026-10-07 for bifrost — OPENBBC_LLM_ADAPTER, provider/model format, CGO-off Bifrost embedding. Updated 2026-10-07 for sync-bifrost — Go 1.27+, v1 provider allow-list, required model on bifrost, <PROVIDER>_BASE_URL rule. -->
+<!-- migrated from _migration-quarantine/PRODUCTION.md § 1, § 4, § 5, § 8, ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Training sessions, § Chat header overrides, § Docker deployment, DESIGN.md § Tech Stack on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING + 026 discovery_zip + Helm chart + aikdm-runner + published GHCR images). Updated 2026-09-28 for artifact-support — added ARTIFACT_MAX_UPLOAD_MB, is_default invariant, no-bytes-in-Postgres rule, kind-versioning rule. Updated 2026-09-30 for multiagent-tools — added AGENT_TOOL_MAX_DEPTH, AGENT_TOOL_MAX_PARALLEL, DAG topology rule, target-status rule. Updated 2026-10-01 for sync-deployed-runtime-artifacts — migration head 028, nested upload paths, ARTIFACT_MAX_PENDING, bytes rule scoped to an enabled registry. Updated 2026-10-05 for sync-multiagent-feature — migration head 029, AGENT_TOOL_MAX_* validation, DAG acyclic by construction, config frozen outside INITIALIZING/DRAFT. Updated 2026-10-07 for bifrost — OPENBBC_LLM_ADAPTER, provider/model format, CGO-off Bifrost embedding. Updated 2026-10-07 for sync-bifrost — Go 1.27+, v1 provider allow-list, required model on bifrost, <PROVIDER>_BASE_URL rule. Updated 2026-11-24 for declarative-seed — seed-import exception to the DAG rule, version immutability + append-at-tip, static ID format, all-or-nothing boot import. -->

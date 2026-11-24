@@ -36,7 +36,17 @@
   report a missing key as not-found (for AWS S3 this needs `s3:ListBucket`). Each store's
   boot-time `probe()` checks it and fails boot otherwise.
 
-<!-- migrated from _migration-quarantine/DESIGN.md § Assumptions, § Out of Scope, ARCHITECTURE.md § System Overview, § MCP wiring on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING alpha + 026 discovery_zip + Helm chart + aikdm-runner image + published GHCR images) and flow-map-compiler skill LOCKED anti-goals. Updated 2026-10-01 for sync-deployed-runtime-artifacts — artifact-store missing-key assumption. -->
+- **An agent's architecture is frozen after finalize.** This was always the intent (structural
+  fields freeze on first-version creation) and is now **load-bearing**: the seed import
+  uses "same static ID + identical architecture" as its agent identity check, because a
+  version's prompts are written against one specific architecture. Every writer respects
+  it, including `seed_bundle.py --force`, which no longer rewrites a finalized
+  architecture. If architecture ever becomes editable, the import's "different
+  architecture → error" rule must be revisited.
+- **A sub-agent target only needs to be `READY` or `DEPLOYED`, not deployed.** Exported
+  sub-agent versions therefore carry `deploy: none`; child sessions pin them directly.
+
+<!-- migrated from _migration-quarantine/DESIGN.md § Assumptions, § Out of Scope, ARCHITECTURE.md § System Overview, § MCP wiring on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50 (mig 025 PENDING alpha + 026 discovery_zip + Helm chart + aikdm-runner image + published GHCR images) and flow-map-compiler skill LOCKED anti-goals. Updated 2026-10-01 for sync-deployed-runtime-artifacts — artifact-store missing-key assumption. Updated 2026-11-24 for declarative-seed — architecture-frozen assumption is load-bearing; sub-agent targets need not be deployed. -->
 
 ## Design decisions (locked)
 
@@ -153,8 +163,21 @@
     to the existing `TextSurrogate`.
 
   Date: 2026-10-07.
+- **Declarative seeding: create-if-missing, static IDs, boot-time import.** Agents, versions
+  and MCP backends can be declared in an `openbbc-seed-v1` seed set, exported from any
+  instance and imported by `open-bbcd` at boot (after migrations, before serving, in one
+  transaction). Backends follow "the file wins" (they describe the environment, so a rotated
+  token in the Secret must reach the DB on restart); agents and versions follow "create if
+  missing, otherwise leave alone" (new content needs a new static ID); deploy is opt-in per
+  version (`if_none` or `force`). Cross-cluster identity is an operator-chosen, write-once
+  static ID rather than the per-database UUID. Rationale: the deployment model is "the
+  agent is stable, the deployed version changes" — a fresh cluster gets a working agent at
+  boot, while a client's own versions and deployment are never overwritten and our version
+  is guaranteed present to deploy or roll back to. Trade-offs: a bad seed or missing Secret
+  key takes the whole app down at boot (fail fast, validate in CI); `force` re-pins on every
+  restart; a same-named backoffice backend is taken over. Date: 2026-11-24.
 
-<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. Updated 2026-10-01 for sync-deployed-runtime-artifacts — two artifact legs, per-session artifact tables, bytes rule scoped to an enabled registry, text-only eval replay, text-only agent tool. Updated 2026-10-07 for bifrost — added Bifrost LLM-adapter locked decision. Updated 2026-10-07 for sync-bifrost — v1 key-only provider allow-list. -->
+<!-- migrated from _migration-quarantine/ARCHITECTURE.md § MCP wiring, § Feedback + datasets, § Evals, § Docker deployment, DESIGN.md, PRODUCTION.md § 1a Docker Compose, § 1b Standalone containers, § 6 Batch operations on 2026-09-28. Updated 2026-09-28 for OpenBBC PR #50. Updated 2026-09-28 for artifact-support — added locked decision for pluggable artifact-store adapter. Updated 2026-10-01 for sync-deployed-runtime-artifacts — two artifact legs, per-session artifact tables, bytes rule scoped to an enabled registry, text-only eval replay, text-only agent tool. Updated 2026-10-07 for bifrost — added Bifrost LLM-adapter locked decision. Updated 2026-10-07 for sync-bifrost — v1 key-only provider allow-list. Updated 2026-11-24 for declarative-seed — declarative seeding locked decision. -->
 
 ## Open questions
 

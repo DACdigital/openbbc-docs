@@ -24,7 +24,8 @@ streamed over AG-UI SSE), `deployed_session_artifacts` (migration 028;
 `session_id → deployed_sessions(id) ON DELETE CASCADE`; one row per artifact in a session's
 read scope, origin `upload` | `tool_result`, `message_id NULL` = pending).
 
-Publishes: `POST /deployed/{agent_id}/sessions` (create),
+Publishes (on every route `{agent_id}` may be the agent's UUID or its static ID; sessions
+stay keyed by UUID, so both address the same sessions): `POST /deployed/{agent_id}/sessions` (create),
 `GET /deployed/{agent_id}/sessions?user_id=X` (list),
 `GET /deployed/{agent_id}/sessions/{id}?user_id=X` (read, 404 on mismatch),
 `PATCH .../title`, `DELETE .../sessions/{id}?user_id=X` (cascades messages),
@@ -55,3 +56,10 @@ Implements the [`deployed-runtime`](../../../ddd/contexts/deployed-runtime.md) D
 Consumes the shared LLM tool machinery from [`tool-runtime`](../tool-runtime/README.md).
 
 ## Scope (in / out)
+
+**In:** deployed sessions (root and child), AG-UI turn streaming, session-scoped artifact
+routes, and resolving `{agent_id}` (UUID or static ID) to the agent before each route.
+
+**Out:** choosing which version is DEPLOYED and assigning static IDs (owned by
+[`agent-lifecycle`](../agent-lifecycle/README.md)); tool dispatch internals (shared
+[`tool-runtime`](../tool-runtime/README.md)); authentication (operator's gateway).

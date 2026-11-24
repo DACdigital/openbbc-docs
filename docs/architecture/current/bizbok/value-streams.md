@@ -200,3 +200,41 @@ Outcome: the end user gets streamed agent responses; the client backend gets MCP
 tool calls scoped to the session's `user_id`.
 
 <!-- migrated from _migration-quarantine/DESIGN.md § Phase V, ARCHITECTURE.md § Data Flow / Flow 5, PRODUCTION.md § 2 Integrating your frontend on 2026-09-28 -->
+
+### Ship a trained version to a client cluster
+
+Trigger: we have trained an agent version locally and need that exact version serving on a
+client's cluster, which we don't operate and where no backoffice step is possible.
+
+1. Admin trains and tests the version locally until it is `READY`
+   ([`training-session-lifecycle`](capabilities.md#l2-capabilities),
+   [`version-management`](capabilities.md#l2-capabilities)).
+2. Admin exports it from the version page
+   ([`declarative-seeding`](capabilities.md#l2-capabilities)): the export picks or confirms
+   a **static ID** for every agent and version in the closure (persisted locally), sets the
+   deploy marker for the requested version (`if_none` by default), and downloads a
+   self-contained `openbbc-seed-v1` file whose backend header values are `${VAR}`
+   placeholders. The required variable names are listed with the download.
+3. Operator puts the seed file in the Helm values (`seed.files`) and the `${VAR}` values in
+   the Secret `open-bbcd` already reads its env from. `open-bbcd seed validate --no-env` in
+   CI checks the file without the client's secrets
+   ([`declarative-seeding`](capabilities.md#l2-capabilities)). Operator installs or
+   upgrades the chart; a changed seed rolls the `open-bbcd` pod.
+4. On boot, after migrations and before serving, `open-bbcd` imports the seed set in one
+   transaction ([`declarative-seeding`](capabilities.md#l2-capabilities)): backends are
+   upserted from the file ([`mcp-backend-management`](capabilities.md#l2-capabilities)),
+   missing agents and versions are created (versions appended at the agent's tip, directly
+   `READY`), and the marked version is deployed if nothing is deployed yet
+   ([`agent-deployment`](capabilities.md#l2-capabilities)). Any error stops the boot.
+5. The client frontend talks to the agent at `/deployed/<agent static_id>/…`
+   ([`deployed-session-management`](capabilities.md#l2-capabilities),
+   [`ag-ui-turn-streaming`](capabilities.md#l2-capabilities)).
+6. Later, the client may train and deploy its own versions on that cluster. Restarts never
+   overwrite them or their deployment (unless the seed says `force`), and the seeded
+   version stays present, so the client can always deploy or roll back to it
+   ([`agent-deployment`](capabilities.md#l2-capabilities)).
+
+Outcome: a fresh cluster comes up serving the declared agent with no backoffice step; the
+same static ID names the same immutable content on every cluster.
+
+<!-- new value stream added 2026-11-24 for declarative-seed. -->
