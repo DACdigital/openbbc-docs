@@ -4,7 +4,7 @@ description: Decompose a solution architecture node into children at the level b
 disable-model-invocation: true
 ---
 
-# /modularize `[<slug>] [--refine]`
+# /modularize `[<slug>] [--refine [--into-log <codename>]]`
 
 ## Purpose
 
@@ -22,6 +22,11 @@ Consumers (`/plan-sprint`, `/split-issue`) read the tree and layer state on top.
   itself).
 - `--refine` (optional flag) — operate on the target's existing children (add / edit / rename /
   remove) instead of producing fresh ones.
+- `--into-log <codename>` (optional, only with `--refine`) — append this run's ops to the existing
+  arch-log entry `docs/architecture/logs/<codename>/README.md` (the full dated dir name, e.g.
+  `2026-10-20-move-billing`; a bare `<name>` resolves by globbing `logs/*-<name>/` and must match
+  exactly one dir) instead of creating a new one. Used by `/arch-change` so one arch change yields one log entry. Fails if
+  the entry does not exist. Rejected without `--refine`.
 
 ## Level rules
 
@@ -142,9 +147,14 @@ Consumers (`/plan-sprint`, `/split-issue`) read the tree and layer state on top.
      descendant's `parent` field that referenced the old slug.
    - **remove <n>** — print the subtree preview (recursive tree of files under the child); prompt
      explicit `remove <slug>` confirmation; delete the subdir recursively.
-5. **After the loop**, if any operation was performed, create a paired arch-log entry summarizing
-   the ops (see log format in normal-mode step 9; `Driver` becomes `/modularize --refine run on
-   <target-slug>`; `Impact` enumerates every add / edit / rename / remove).
+5. **After the loop**, if any operation was performed:
+   - **Without `--into-log`** — create a paired arch-log entry summarizing the ops (see log format
+     in normal-mode step 9; `Driver` becomes `/modularize --refine run on <target-slug>`; `Impact`
+     enumerates every add / edit / rename / remove).
+   - **With `--into-log <codename>`** — create no new entry. In the existing entry, append one
+     `Impact` line per op (`+` add, `~` edit, `→` rename `old → new`, `-` remove, each with the
+     node's `modularity/…/README.md` path) and append one sentence to `Decision` summarizing the
+     tree ops (e.g. "Tree: added `billing` under root."). Leave every other field untouched.
 
 ## Config
 

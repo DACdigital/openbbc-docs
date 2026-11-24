@@ -5,7 +5,7 @@ reads or writes arch content references this file via `@.claude/skills/check-set
 When this schema changes, downstream repos pick it up via `/sdd-rebase`.
 
 **Consumers:** `/check-setup` (enforces), `/setup-project` (scaffolds), `/migrate-arch`
-(buckets into), `/new-feature` (routes edits to the right lens files).
+(buckets into), `/arch-change` (routes edits to the right lens files).
 
 **Overall shape.** 20 required files minimum — 17 content files + 3 lens READMEs —
 organized as top-level cross-cutting + three lens dirs (`bizbok/`, `ddd/`, `c4/`), plus
@@ -56,11 +56,45 @@ required section counts as filled — a positive assertion of inapplicability.
 ## Diagram conventions {#diagram-conventions}
 
 Every required diagram in the schema uses one of the mermaid syntaxes below. Skills that
-write diagram sections (`/migrate-arch`, `/new-feature`, `/setup-project` scaffolder)
+write diagram sections (`/migrate-arch`, `/arch-change`, `/setup-project` scaffolder)
 consult this section for the syntax + a minimal template; each file schema below points
 back here in its non-placeholder rule where a diagram is required. Keeping the syntax
 uniform across projects means downstream renderers and `/arch-log-review` can rely on a
 stable shape.
+
+### Safe labels for GitHub-strict mermaid {#safe-labels}
+
+Every label produced by a schema-writing skill must survive GitHub's mermaid renderer
+(and Obsidian's, which is also strict). Content is preserved by **substitution**, not by
+escaping — escaping is unreliable across renderer versions. Rules distilled from two
+rounds of production breakage.
+
+**Forbidden anywhere in a label — with safe substitute:**
+
+| Character / pattern | Where it fails | Substitute |
+|---|---|---|
+| `—` em dash | subgraph names, participant labels, sequenceDiagram messages, C4 quoted labels | `-` or `,` |
+| `\|` pipe | flowchart edge labels, node labels, C4 `Rel` technology labels | `,` or ` or ` |
+| `/` slash | sequenceDiagram messages, flowchart edge labels, C4 `Rel` labels | ` or `, `,`, or ` to ` |
+| `(...)` wrapping a role after `as` in a `participant` line | sequenceDiagram | drop the parens; use ` - ` (e.g., `participant Op as Operator - script or cron`) |
+| `(...)` opening a message body | sequenceDiagram | drop the parens; use ` - ` inline or move detail to surrounding prose |
+| `;` semicolon | quoted labels in `C4Context` / `C4Container` (`Person(...)`, `Container(...)`, `Rel(...)`) | `,` |
+| `*` asterisk (especially runs like `*/5`, `TEXT_MESSAGE_*`) | sequenceDiagram messages and `Note over` | drop the wildcard; spell out the intent (`RUN_STARTED, TEXT_MESSAGE, TOOL_CALL, TURN_END events`; `every 5 minutes`) |
+| hyphenated compounds (`server-to-server`, `per-session`, `MCP-wrapped`) | sequenceDiagram message bodies | space-separated (`server to server`, `per session`, `REST or MCP`) |
+| `<br/>` inside `Note over` | sequenceDiagram | one-line the note; move detail out of the note |
+
+**Labelled dotted arrows in flowcharts:** always use pipe-bracket syntax
+`A -.->|label| B`. Never `A -. label .-> B` — a `.` inside the label (filenames,
+versions, IP addresses) confuses the `.->` terminator.
+
+**Self-check before writing a diagram section:** scan the generated mermaid block for any
+of the entries above; when a source-derived label carries a forbidden character,
+substitute per the rule row. If a substitution would change meaning, prefer restructuring
+the diagram (split one `Rel` into two, hoist a note into surrounding prose) over
+distorting the fact.
+
+**Applies to:** every mermaid template in the sections below. Content is preserved;
+diagrams say the same thing in strict-parser-safe syntax.
 
 ### `README.md § System at a glance`
 
@@ -151,7 +185,7 @@ trust boundaries marked via a `stroke-dasharray` class on the boundary subgraph.
             API[API]
         end
 
-        subgraph DATA[Data zone — trust boundary]
+        subgraph DATA[Data zone - trust boundary]
             DB[(Database)]
         end
 

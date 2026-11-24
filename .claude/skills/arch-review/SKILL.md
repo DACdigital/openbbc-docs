@@ -33,7 +33,7 @@ after a PASS / PASS_WITH_ISSUES verdict on C1 or C2 specs.
   the command creates a branch, applies non-AMBIGUOUS edits, and writes the arch-log entry —
   **without committing**. The user reviews `git status` + `git diff` and commits manually.
 - `--pr` (default off, only meaningful with `--apply`) — after applying, stage + commit + push +
-  `glab pr create` for the arch sync PR. Without `--pr`, the branch stays local.
+  open the arch sync PR. Without `--pr`, the branch stays local.
 
 ## Steps
 
@@ -71,8 +71,9 @@ after a PASS / PASS_WITH_ISSUES verdict on C1 or C2 specs.
 7. **If `--pr` IS passed** — stage the changed files (`git add docs/architecture/current/
    docs/architecture/logs/<YYYY-MM-DD>-<codename>/`), commit with message
    `arch: sync current/ with <spec-name>[, +N more]`, push (`git push -u origin arch/<codename>`),
-   and open the PR (`glab pr create --title "arch: sync current/ with <spec-name>[, +N more]"`
-   with a body summarizing the deltas applied and the source spec shortlist).
+   and open a PR against the default branch with the `gitHost` client, obtained per
+   [Client resolution](../../../docs/process/README.md#client-resolution) — title `arch: sync current/ with
+   <spec-name>[, +N more]`, body summarizing the deltas applied and the source spec shortlist.
    Otherwise, print `Branch arch/<codename> created and edited but NOT committed. Review with
    git status / git diff, then commit and push manually.` and exit.
 
@@ -146,5 +147,6 @@ SCOPE_MOVE deltas.
 
 ## Config
 
-Reads `.claude/tracker.json` → `comms` (optional notification only). Uses `glab` for PR resolution
-(step 1) and PR creation (step 7).
+Reads `.claude/tracker.json` → `gitHost` (the docs repo lives on `gitHost`; used to open the sync
+PR in step 7) and `comms` (optional notification only). Clients for both roles are obtained per
+[Client resolution](../../../docs/process/README.md#client-resolution). Does not read `tracker`.

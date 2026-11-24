@@ -46,7 +46,8 @@ DM (Delivery Manager). No hard gate — anyone with tracker write access can inv
    - **Ad-hoc** — prompt "any items not in the tree?". For each: `title`, `priority`
      (P0/P1/P2), `change_level` (C0/C1/C2). `Module` column will be left blank for these.
 6. **Create the tracker milestone** via the tracker adapter (read
-   `.claude/tracker.json` → `tracker.platform`):
+   `.claude/tracker.json` → `tracker.platform`; obtain the `tracker` client — and, for a GitHub
+   docs-repo milestone, the `gitHost` client — per [Client resolution](../../../docs/process/README.md#client-resolution)):
    - **Plane** — create a cycle named `<sprint-name>`.
    - **GitHub** — create a milestone in the docs repo named `<sprint-name>`.
    - **GitLab** — create a milestone at the project (or group, per team convention) named `<sprint-name>`.
@@ -54,7 +55,7 @@ DM (Delivery Manager). No hard gate — anyone with tracker write access can inv
 
        | <feature-title> | <priority> | <level> | <l2-slug or blank> | | | <sprint-name> | |
 
-   Column order matches the schema in `docs/superpowers/specs/2026-08-12-sprint-driven-roadmap-design.md` Part 3:
+   Column order matches the ROADMAP schema in `docs/process/README.md` § ROADMAP schema:
    `Feature | Priority | Level | Module | Spec | Issues | Milestone | Link`. `Spec`, `Issues`, and
    `Link` start empty. `/create-issues` fills `Issues` at planning time (step 8 or standalone);
    `/new-spec` sets `Spec` at spec-write time; `/roadmap-sync` reconciles `Link` and `Milestone`
@@ -86,6 +87,6 @@ DM (Delivery Manager). No hard gate — anyone with tracker write access can inv
 
 ## Config
 
-Reads `.claude/tracker.json` → `tracker.platform` and (for docs-repo git host, for the milestone
-adapter branch on GitHub/GitLab) `gitHost.platform`. Writes to `ROADMAP.md` and to the tracker via
-the appropriate MCP.
+Reads `.claude/tracker.json` → `tracker` and (for docs-repo git host, for the milestone adapter
+branch on GitHub/GitLab) `gitHost`. Writes to `ROADMAP.md` and to the tracker, using the
+`tracker` / `gitHost` clients obtained per [Client resolution](../../../docs/process/README.md#client-resolution).

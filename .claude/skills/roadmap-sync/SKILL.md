@@ -21,7 +21,7 @@ Planning contexts only:
 - When the user explicitly asks (`/roadmap-sync`, "sync the roadmap", "refresh ROADMAP links").
 - During a periodic planning review where ROADMAP has drifted from tracker state.
 
-Do **not** suggest this command as a follow-up to `/new-spec`, `/create-issues`, `/new-feature`,
+Do **not** suggest this command as a follow-up to `/new-spec`, `/create-issues`, `/arch-change`,
 `/spec-review`, `/arch-review`, or any other feature-scoped work. Those flows already write the
 ROADMAP columns they own; a proactive `/roadmap-sync` suggestion there is noise and pushes the
 user toward a planning-time operation from a non-planning context. See
@@ -36,7 +36,8 @@ user toward a planning-time operation from a non-planning context. See
 
 1. **Read `ROADMAP.md`** and, for each row (or just `<name>` if given), read its existing `Issues` and
    `Link` values to find the tracker items already associated with it.
-2. **Branch on `tracker.platform`**:
+2. **Branch on `tracker.platform`**, using the `tracker` client obtained per
+   [Client resolution](../../../docs/process/README.md#client-resolution):
    - **plane** → refresh child work-item states under the feature's epic; ensure a cycle exists for
      the feature's target milestone/timebox if `Milestone` names one, creating it if missing.
    - **github** → refresh sub-issue/tracking-issue states; ensure a milestone exists for the feature's
@@ -50,5 +51,6 @@ user toward a planning-time operation from a non-planning context. See
 
 ## Config
 
-Reads `.claude/tracker.json` → `tracker` (platform, org, projectId) to select the adapter in step 2.
+Reads `.claude/tracker.json` → `tracker` (platform, instanceUrl, org, projectId) to select the
+adapter in step 2; the `tracker` client is obtained per [Client resolution](../../../docs/process/README.md#client-resolution).
 Does not read `gitHost` or `comms`.

@@ -1,6 +1,6 @@
 ---
 name: architecture-log-review
-description: Reviews any PR that touches docs/architecture/current/ for the paired log-entry rule — must add exactly one new docs/architecture/logs/YYYY-MM-DD-<codename>/README.md with the required fields, matching the changes to current/. Emits a PASS/PASS_WITH_ISSUES/FAIL verdict for the invoking command to route — a passing verdict is posted as a comment on the PR, a FAIL goes back to the author in the invoking session only and is never posted. Use when /arch-log-review is invoked on a PR that touches current/.
+description: Reviews any PR that touches docs/architecture/current/ for the paired log-entry rule — must add exactly one new docs/architecture/logs/YYYY-MM-DD-<codename>/README.md with the required fields, matching the changes to current/. Emits a PASS/PASS_WITH_ISSUES/FAIL verdict for the invoking command to route — a passing verdict is posted as a comment on the PR, a FAIL goes back to the author in the invoking session only and is never posted. Use when /arch-log-review is invoked on a PR or (pre-push) a local branch that touches current/.
 tools: Read, Grep, Glob
 ---
 
@@ -16,11 +16,11 @@ only, never to the PR.
 
 Read, in this order:
 
-1. `docs/process/README.md` and `docs/process/AGENTS.md` — recall the append-only log rule and the
-   required fields.
-2. `docs/superpowers/specs/2026-08-12-solution-architecture-home-design.md` — the design that
-   defines the log format and the enforcement rules (Parts 3 and 5).
-3. The PR diff for the PR under review.
+1. `docs/process/README.md` (§ Architecture log entries — the log format, required fields and
+   rules) and `docs/process/AGENTS.md` — the append-only log rule and the hard rules.
+2. The diff under review — a PR diff (on-PR mode) or the local branch diff against the default
+   branch (pre-push mode). Treat both identically; "the PR" below means whichever diff you were
+   given.
 
 ## Checks
 
@@ -34,7 +34,7 @@ surface scoping observations that are useful regardless of gate outcome.
    codename is lowercase kebab-case (`[a-z0-9-]+`, max ~40 chars)?
 3. **Required fields present.** Does the new log's `README.md` include all required fields — Date,
    Codename, Driver, Decision, Rationale, Alternatives rejected, Impact, Links — in the format
-   defined in the spec (Part 3)?
+   defined in `docs/process/README.md` § Architecture log entries?
 4. **Impact matches diff.** Does the `Impact` field list the specific `current/` files the PR
    touched? Vague "everything under current/" without a real reason fails.
 5. **Append-only invariant.** Are past log entries under `docs/architecture/logs/` untouched? Any

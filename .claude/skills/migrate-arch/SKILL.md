@@ -31,7 +31,7 @@ Before doing any work, **invoke `/check-setup` in-session** and read the four-ch
 
 - **All 20 required files present** (presence sub-check passes) → print `nothing to migrate — /check-setup presence passes` and exit.
 - **Some required files missing** (presence sub-check fails) → migration needed, proceed.
-- **All files present but non-placeholder sub-check fails** → print `not a migration case — fill ARCH_GAP markers manually or via /new-feature` and exit.
+- **All files present but non-placeholder sub-check fails** → print `not a migration case — fill ARCH_GAP markers manually or via /arch-change` and exit.
 
 ## Steps
 
@@ -97,6 +97,17 @@ Before doing any work, **invoke `/check-setup` in-session** and read the four-ch
      `@.claude/skills/check-setup/arch-schema.md#diagram-conventions` for the mermaid
      syntax + template. Populate the template with the entities extracted from source —
      never invent new diagram styles.
+   - **Sanitize every label on the way in.** Every label written into a mermaid block
+     must pass the rules at `@.claude/skills/check-setup/arch-schema.md#safe-labels`.
+     Source content routinely carries characters GitHub's strict mermaid parser rejects
+     — em dashes, pipes, slashes, parenthesised roles, hyphenated compounds like
+     `server-to-server`, semicolons in C4 quoted labels, wildcard asterisks in
+     sequenceDiagram messages, `.` inside labelled dotted-arrow labels. Substitute per
+     the rule table before the diagram is written to disk. Do not rely on escaping —
+     use the safe substitute. If a substitution would distort a fact, restructure the
+     diagram (split a `Rel` into two, hoist a note into surrounding prose) rather than
+     keep the forbidden character. **Self-check the generated mermaid block against the
+     `#safe-labels` table before moving on to the next section.**
 
 6. **Move source content out of the way (before writing targets).** Sweep every path in the
    source inventory from step 3 so `docs/architecture/current/` is empty of source content at
@@ -167,10 +178,10 @@ Before doing any work, **invoke `/check-setup` in-session** and read the four-ch
 
        **Links**:
        - .claude/skills/check-setup/arch-schema.md
-       - docs/superpowers/specs/2026-09-18-arch-current-schema-design.md
 
 9. **Commit and push.** `git add docs/architecture/current/** docs/architecture/logs/YYYY-MM-DD-arch-schema-migration/`,
-   commit, push the branch, open a PR against the current default branch.
+   commit, push the branch, open a PR against the current default branch with the `gitHost`
+   client, obtained per [Client resolution](../../../docs/process/README.md#client-resolution).
 
 10. **Append the migration report to the PR description** (not committed). Format:
 
@@ -220,5 +231,7 @@ Idempotency-lite. On a second invocation:
 
 ## Config
 
-Reads `.claude/tracker.json` (comms only, optional notification). Writes to the migration branch;
-does not touch the tracker or the default branch directly.
+Reads `.claude/tracker.json` → `gitHost` (the docs repo lives on `gitHost`; used to open the
+migration PR in step 9) and `comms` (optional notification). Clients for both roles are obtained per
+[Client resolution](../../../docs/process/README.md#client-resolution). Writes to the migration branch; does
+not touch the tracker or the default branch directly.

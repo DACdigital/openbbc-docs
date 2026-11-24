@@ -15,7 +15,8 @@ job, invoked explicitly.
 
 This command does **not** read specs, plans, or the modularity tree. Everything it needs is on
 the ROADMAP row. The old post-spec-merge decomposition flow is gone — see
-`docs/superpowers/specs/2026-09-09-create-issues-planning-time-design.md` for the reshape.
+the template repo's design history (`docs/superpowers/specs/2026-09-09-create-issues-planning-time-design.md`
+in `dac-docs-template`) for the reshape.
 
 ## Inputs
 
@@ -35,7 +36,8 @@ the ROADMAP row. The old post-spec-merge decomposition flow is gone — see
      the user to pick one (default: the repo whose name matches the row's `Module` slug when
      one matches, otherwise no default). Do not attempt to infer from module front-matter —
      the modularity tree does not carry a `home_repo` field today.
-3. **Create one tracker issue** via the adapter:
+3. **Create one tracker issue** with the `tracker` client, obtained per
+   [Client resolution](../../../docs/process/README.md#client-resolution):
    - **Plane** — create a work item under `tracker.projectId` with `title = <feature>`, priority
      mapped from the row, and no parent (this is a top-level item). Assign to the milestone/cycle
      whose name matches the row's `Milestone` column, creating it if missing.
@@ -63,6 +65,8 @@ the ROADMAP row. The old post-spec-merge decomposition flow is gone — see
 
 ## Config
 
-Reads `.claude/tracker.json` → `tracker` (platform, org, projectId) to select the adapter in
-step 3. Also reads `gitHost` when `tracker.platform` is `github` or `gitlab`, to know which org
-the target service repo lives in. Reads `workspace/INDEX.md` to list candidate repos in step 2.
+Reads `.claude/tracker.json` → `tracker` (platform, instanceUrl, org, projectId) to select the
+adapter in step 3. Also reads `gitHost` when `tracker.platform` is `github` or `gitlab`, to know
+which org the target service repo lives in. Clients for both roles are obtained per
+[Client resolution](../../../docs/process/README.md#client-resolution). Reads `workspace/INDEX.md` to list
+candidate repos in step 2.

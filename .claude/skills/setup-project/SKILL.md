@@ -22,20 +22,37 @@ artifacts and offer skip/redo. On re-run, resume at the first incomplete phase.
 
 ### Phase 0 — Access & connectivity
 
-1. Prompt for the **tracker** (`plane` | `github` | `gitlab`) + org + `projectId` (leave blank if it
-   will be created in Phase 4); the **git host** (`github` | `gitlab`) + org (may equal the tracker —
-   Plane is issues-only, so repos still need a git host); an **optional comms** channel (`slack` |
-   `discord`) + id (skip the block entirely if declined).
-2. Write `.claude/tracker.json` (`tracker`, `gitHost`, optional `comms`) per the base design schema.
-3. Write `.mcp.json` with **only** the chosen tracker and (if different) git-host blocks — strict JSON,
-   no comments, drop unused blocks. Plane runs via `uvx plane-mcp-server stdio` (needs `uv` on PATH);
-   confirm the exact server command/package per platform (GitHub's official MCP may ship as a
-   container/binary rather than an npm package).
-4. Write `.env` from `.env.example`, keeping the chosen platforms' keys, values left blank.
-5. **Connectivity probe** — for each configured MCP server, make one cheap read call and report ✅ / ❌:
-   Plane → list workspace projects; GitHub → get the authenticated user / list org repos; GitLab → get
-   the current user / list group projects. On ❌, **stop** with a specific fix hint (missing token, `uv`
-   not installed, wrong `PLANE_BASE_URL`). Do not proceed until every configured server is green.
+1. Prompt for the **tracker** (`plane` | `github` | `gitlab`) + its **instance URL** + org (Plane:
+   workspace slug) + `projectId` (leave blank if it will be created in Phase 4); the **git host**
+   (`github` | `gitlab`) + its **instance URL** + org (may equal the tracker — Plane is issues-only,
+   so repos still need a git host); an **optional comms** channel (`slack` | `discord`) + id (skip
+   the block entirely if declined). Instance URLs are web roots with no API path or trailing slash
+   (`https://gitlab.dac.digital`, `https://github.com`, `https://plane.dac.digital`). **Never ask for
+   a token** — credentials stay in the CLI, the shell environment or the user's own MCP config.
+2. Write `.claude/tracker.json` (`tracker`, `gitHost` — each with `instanceUrl` — and optional
+   `comms`) per [Client resolution](../../../docs/process/README.md#client-resolution).
+3. Write `.mcp.json` — strict JSON, no comments. It holds a block only for a tracker whose adapter has
+   **no CLI tier** (today: Plane); git-host platforms never get a project block. For Plane, keep
+   `${PLANE_API_KEY}` as the only variable and write `PLANE_BASE_URL` / `PLANE_WORKSPACE_SLUG` as
+   literals from `tracker.json`. When the tracker is not Plane, write `{"mcpServers": {}}`. Plane runs
+   via `uvx plane-mcp-server stdio` (needs `uv` on PATH). **Never write a literal credential** —
+   `.mcp.json` is committed.
+4. **Resolve a client for every configured role** (`tracker`, `gitHost`, `comms` if configured) per
+   [Client resolution](../../../docs/process/README.md#client-resolution), interactive mode: CLI,
+   then the user's own MCP server or connector (offered once; on yes, the project entry goes into
+   `disabledMcpjsonServers` in `.claude/settings.local.json` and Claude Code needs a restart), then
+   the project `.mcp.json` server. Report per role ✅ tier / client / scope / host, or ❌ with every
+   candidate found, the host it is bound to, why it was rejected, and the cheapest fix
+   (`glab auth login --hostname <host>`, `export PLANE_API_KEY=…` in the shell or app that launches
+   Claude Code, `uv` not installed, `claude mcp add --scope local …`). **Stop** until every
+   configured role resolves.
+
+   A green answer is only accepted after the **instance check** passes: a client — CLI or MCP, at any
+   scope — that answers from a different host or workspace than `tracker.json` names is rejected, not
+   counted as working. It would pass for whoever ran setup and fail for everyone else.
+5. Write `.claude/clients.local.json` with the resolved entries. Verify: `git check-ignore
+   .claude/clients.local.json` succeeds, `.mcp.json` contains no literal credential (secrets only as
+   `${VAR}`), and `git status` shows no new tracked file holding a secret.
 
 ### Phase 1 — Docs-repo identity
 
@@ -45,6 +62,18 @@ artifacts and offer skip/redo. On re-run, resume at the first incomplete phase.
    suffix) and the `<project>` field in `CLAUDE.md`. (`ROADMAP.md` has no name placeholder.)
 3. Rename the working directory to the chosen name.
 4. Detach the template: `git remote remove origin`. Idempotent — skip if origin is already non-template.
+   Then drop the template's own design history. In the same run that detaches the template, and
+   only then, the repo is a fresh template copy with no project specs yet, so every tracked file
+   under `docs/superpowers/specs/` and `docs/superpowers/plans/` belongs to the template:
+
+   ```
+   git ls-files docs/superpowers/specs docs/superpowers/plans \
+     | grep -v '^docs/superpowers/specs/\.gitkeep$' | xargs git rm -q --
+   ```
+
+   Doing it before the first push keeps it out of the project's history. Never run this on a
+   re-run where origin is already non-template: by then the specs may be the project's own.
+   `docs/superpowers/specs/` keeps only its `.gitkeep` and will hold this project's feature specs.
 5. **Create-or-adopt** the repo on the git host (`gitHost` from Phase 0) and push. If a repo of that
    name already exists on the host, adopt it (set origin, push) instead of creating a new one.
 
@@ -112,7 +141,7 @@ artifacts and offer skip/redo. On re-run, resume at the first incomplete phase.
            .claude/skills/check-setup/arch-schema.md
 
            **Rationale**: every project starts from the same 20-file skeleton so downstream
-           skills (/new-feature, /spec-review, /modularize) can rely on a stable shape.
+           skills (/arch-change, /spec-review, /modularize) can rely on a stable shape.
 
            **Alternatives rejected**:
            - Freestyle (any layout) — rejected: makes tooling brittle and prevents cross-project
@@ -124,7 +153,6 @@ artifacts and offer skip/redo. On re-run, resume at the first incomplete phase.
 
            **Links**:
            - .claude/skills/check-setup/arch-schema.md
-           - docs/superpowers/specs/2026-09-18-arch-current-schema-design.md
 3. **Ingest estimate — OPTIONAL.** Prompt: "Do you have an approved estimate to import?" [y/n]:
    - **y** — extract NFRs and Assumptions from the estimate and write them directly into
      `docs/architecture/current/nfrs.md` and `docs/architecture/current/assumptions.md`,
@@ -153,7 +181,7 @@ artifacts and offer skip/redo. On re-run, resume at the first incomplete phase.
 Phase 2 stops here. Every scaffolded file has one `ARCH_GAP` marker per required section, so
 `/check-setup` (Phase 6) will report the full punch list. This is expected — the report *is* the
 list of gaps to fill. No modularization is run at setup. The DM/PL iterates on `current/` (with
-paired arch-log entries per `/new-feature`) until the architecture is stable, then runs
+paired arch-log entries per `/arch-change`) until the architecture is stable, then runs
 `/modularize` at root, then `/plan-sprint`.
 
 ### Phase 3 — Repos
@@ -178,11 +206,13 @@ service repo via PR.
 
 ### Phase 6 — Completeness check
 
-Run **`/check-setup`** and show the report. Then print next steps: `/new-feature <name>` to add the
+Run **`/check-setup`** and show the report. Then print next steps: `/arch-change <name>` (type: new) to add the
 first capability to the solution architecture, followed by `/new-spec <name>` to write its spec.
 
 ## Config
 
 Writes `.claude/tracker.json` in full (`tracker`, `gitHost`, optional `comms`) — this command is the
-source of that file — plus `.mcp.json` and `.env`. On re-run, reads the existing files to detect prior
-setup and resume at the first incomplete phase.
+source of that file — plus `.mcp.json` (committed; secrets only as `${VAR}`),
+`.claude/clients.local.json` (gitignored, per machine) and, when the user picks their own MCP server,
+`disabledMcpjsonServers` in `.claude/settings.local.json`. Never writes or asks for a credential. On
+re-run, reads the existing files to detect prior setup and resume at the first incomplete phase.

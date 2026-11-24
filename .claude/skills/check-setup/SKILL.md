@@ -1,6 +1,6 @@
 ---
 name: check-setup
-description: Read-only audit that every onboarding phase completed — config, MCP connectivity, repos, tracker, rules
+description: Read-only audit that every onboarding phase completed — config, client resolution, repos, tracker, rules
 disable-model-invocation: true
 ---
 
@@ -14,15 +14,37 @@ command to fix each gap. Changes nothing.
 ## Inputs
 
 None. Reads the config files, `workspace/`, `docs/repos/`, `ROADMAP.md`, and (read-only) the
-tracker/git-host MCPs.
+tracker / git-host / comms clients per
+[Client resolution](../../../docs/process/README.md#client-resolution).
 
 ## Checks
 
 1. **Config present & non-placeholder** — `.claude/tracker.json` has real `tracker` + `gitHost` values
-   (no `plane|github|gitlab` / `...` placeholders); `.env` exists with the chosen platforms' keys set;
-   `.mcp.json` contains only the chosen platform block(s). Fix: `/setup-project` (Phase 0).
-2. **MCP connectivity** — probe each configured MCP server with one read call; report ✅ / ❌. Fix:
-   check `.env` tokens and `uv` on PATH (Plane), then re-run `/setup-project`.
+   (no `plane|github|gitlab` / `...` / `https://...` placeholders), each with an `instanceUrl` (a file
+   without it is from before client resolution — fix: re-run `/setup-project`); `.mcp.json` contains
+   only blocks for no-CLI tracker platforms, with secrets only as `${VAR}` (a literal-looking token
+   is ❌ — it is committed; rotate it); `.claude/clients.local.json` is gitignored
+   (`git check-ignore` succeeds). A leftover `.env` is ⚠️, not ❌: "`.env` is not read by anything —
+   move its values into your shell environment". Fix: `/setup-project` (Phase 0).
+2. **Client resolution** — for each configured role (`tracker`, `gitHost`, `comms`), run
+   [Client resolution](../../../docs/process/README.md#client-resolution) in **read-only mode**: no
+   prompt, no writes. Report per role ✅ tier / client / scope / host, or ❌. Then compare with
+   `.claude/clients.local.json`: a missing entry, a different client, or an `instanceUrl` that differs
+   from `tracker.json` is ⚠️ drift — fix: re-run `/setup-project` (Phase 0). A tier-2 candidate the
+   user has not been offered yet is reported as ⚠️ "your own `<name>` could serve this role".
+
+   On ❌, name the real cause before blaming the token — the server's error text often reads the same
+   for all of them:
+
+   | Condition | Report | Fix |
+   |---|---|---|
+   | CLI found but logged in to a different host | client bound to `<host>`, project uses `<instanceUrl>` | `glab auth login --hostname <host>` / `gh auth login --hostname <host>` |
+   | MCP server answers, but from a different workspace or host | **server answers from the wrong instance** — green for you, broken for the team | point that server at `<instanceUrl>`, or remove it so the next tier applies |
+   | `claude mcp list` shows a missing-variable warning for the project server | **variable not set in Claude Code's environment — the credential never reached the server** | `export PLANE_API_KEY=…` in the shell or app that launches Claude Code; Claude Code does **not** read `.env` |
+   | variable set, call still fails | genuine auth failure | check the token's validity and scopes, `uv` on PATH (Plane) |
+
+   Do **not** infer failure from `${…}` text in `claude mcp get` output: it prints values unexpanded
+   even when expansion works. The missing-variable warning and the read probe are the signals.
 3. **Docs-repo identity** — `git remote -v` origin is not the template, and the docs repo exists on the
    git host. Fix: `/setup-project` (Phase 1).
 4. **Architecture schema conformance** — read the schema at
@@ -41,14 +63,15 @@ tracker/git-host MCPs.
    - Any `modularity/<L1>/README.md` missing the soft-convention header line.
 
    Fix hint: for a fresh scaffold, `/setup-project` (Phase 2). For a brownfield input, run
-   `/migrate-arch`. For unfilled `ARCH_GAP` markers, fill them manually or via `/new-feature`.
+   `/migrate-arch`. For unfilled `ARCH_GAP` markers, fill them manually or via `/arch-change`.
 
 5. **Initial arch-log entry present** — at least one
    `docs/architecture/logs/YYYY-MM-DD-*/README.md` exists. Fix: `/setup-project` (Phase 2) creates
    an initial-scaffold log entry.
 6. **Repos cloned & indexed** — every repo has a `workspace/<repo>/` checkout, a `docs/repos/<repo>.md`
    index, and a row in `workspace/INDEX.md`. Fix: `/setup-workspace` (or `--refresh`).
-7. **Tracker project** — the configured `tracker.projectId` resolves on the tracker. Fix:
+7. **Tracker project** — the configured `tracker.projectId` resolves on the tracker, read through the
+   `tracker` client from check 2 (skipped with ⚠️ if that role did not resolve). Fix:
    `/setup-project` (Phase 4).
 8. **ROADMAP shell present** — `ROADMAP.md` exists with the header and the empty rows table using
    the columns `Feature | Priority | Level | Module | Spec | Issues | Milestone | Link`. Rows may

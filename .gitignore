@@ -27,3 +27,9 @@ Thumbs.db
 
 # Obsidian per-user vault state — not shared
 docs/architecture/**/.obsidian/
+# Secrets. .env is no longer read by anything (see "Client resolution" in docs/process/README.md);
+# it stays ignored so an old local copy is never committed.
+# Per-machine resolved clients (see "Client resolution" in docs/process/README.md)
+.claude/clients.local.json
+# Implementation plans are local working notes, never committed
+docs/superpowers/plans/
